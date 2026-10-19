@@ -57,3 +57,51 @@ Modelled the probability of a price movement conditional on whether the previous
 ## Next Research Direction — V5.0
 
 Investigate a tick-aware TimeGAN with explicit price-movement modelling, while maintaining consistency between generated mid-price paths and the ten-level order book.
+
+## 2026-10-19 — V5.1–V5.3 Constraint-aware LOB Experiments
+
+### Objective
+Investigate whether a constraint-aware LOB decoder can improve market-structure validity while preserving reconstruction quality and generative diversity.
+
+### V5.1: Structural parameterization
+- Verified positive bid-ask spreads and ordered ask/bid levels.
+- Represented 20 relative price features using one spread and 18 level gaps.
+- Maximum price reconstruction error: 2.84e-14.
+- Structural parameterization test passed.
+
+### V5.2: Constraint-aware LOB Head
+- Implemented a differentiable PyTorch LOB head.
+- Verified Min-Max normalization and gradient propagation.
+- Frozen-embedder test normalized LOB MSE: 0.184861.
+- Original V4.3 Recovery test normalized LOB MSE: 0.011923.
+- Found excessively large initial spread and gap values.
+
+### V5.3: Mean-informed initialization
+- Initialized output biases using training-set statistics only.
+- Training-set mean spread: 0.139864.
+- Mean ask gap: 0.019693.
+- Mean bid gap: 0.019951.
+- Test normalized LOB MSE: 0.010218.
+- Original V4.3 Recovery test normalized LOB MSE: 0.011923.
+- Test spread MAE: 0.051112 versus 0.051315 for V4.3.
+- All tested market-structure constraints passed.
+- Initial validation MSE was already lower than the best trained-epoch MSE, suggesting initialization was the primary improvement.
+
+### Generative evaluation
+- Reused the frozen V4.3 Generator and Supervisor with the V5.3 LOB Head.
+- Noise distribution: uniform.
+- Generated 512 sequences of length 24.
+- Real spread standard deviation: 0.041816.
+- Generated spread standard deviation: 0.000158.
+- Real pairwise LOB difference: 0.396822.
+- Generated pairwise LOB difference: 0.0000128.
+- Generated market-structure constraints passed.
+- Severe lack of generative diversity remained.
+
+### Conclusion
+Mean-informed initialization substantially improved constrained LOB reconstruction. However, strong reconstruction results did not translate into realistic generative diversity. The constraint-aware decoder ensures structural validity but does not by itself resolve TimeGAN mode collapse.
+
+These experiments demonstrate the distinction between reconstruction quality, market validity, and generative realism.
+
+### Project decision
+With the submission deadline on 2026-10-30, stop expanding the model architecture. Preserve V3.3 as the stable baseline and document V4.3 and V5.3 as experimental investigations. Prioritize final evaluation, reproducibility, documentation, and submission.
