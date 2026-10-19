@@ -15,7 +15,8 @@ Realistic synthetic LOB data can support the development and testing of algorith
 
 A valid order book must satisfy fundamental market microstructure constraints, including positive bid–ask spreads, correctly ordered price levels, and nonnegative order quantities. Synthetic sequences should also reproduce realistic distributions and temporal variability.
 
-This project investigates whether TimeGAN can generate realistic LOB sequences using historical LOBSTER data.
+
+This project investigates whether TimeGAN can generate realistic LOB sequences using historical LOBSTER data [2].
 
 The main engineering question is:
 
@@ -170,7 +171,8 @@ Generated values can be inverse-transformed to recover relative price offsets an
 
 ## 4. TimeGAN Architecture
 
-The implementation uses five GRU-based neural networks.
+The implementation follows the TimeGAN framework proposed by Yoon et al. [1] and uses five GRU-based neural networks.
+
 
 ### 4.1 Embedder
 
@@ -261,7 +263,15 @@ This indicates possible adversarial training imbalance.
 
 The absolute diversity of generated samples nevertheless remained very low.
 
-**TODO:** Insert verified training loss and diversity plots.
+
+![TimeGAN V3.3 Training Losses](outputs_training_plots/training_losses.png)
+
+*Figure 6. Generator, discriminator, embedder/recovery, and adversarial losses over ten epochs of joint training.*
+
+![TimeGAN V3.3 Sample Diversity](outputs_training_plots/training_diversity.png)
+
+*Figure 7. Changes in generated sample standard deviation and noise sensitivity during joint training. Although both metrics increased, the final generated samples remained insufficiently diverse.*
+
 
 ## 6. Baseline Methods
 
@@ -373,7 +383,8 @@ This indicates that generated spreads were systematically wider and less variabl
 
 Depth heatmaps were constructed from 24 time steps and 20 bid/ask quantity features.
 
-SSIM was computed using independent randomly selected samples.
+Structural Similarity Index (SSIM), originally proposed by Wang et al. [4], was computed using independent randomly selected samples.
+
 
 | Comparison | Mean SSIM | Standard Deviation |
 |---|---:|---:|
@@ -419,7 +430,10 @@ In a valid order book, ask prices should increase or remain nondecreasing across
 
 The violation indicates that an unconstrained continuous generator does not guarantee the preservation of financial market microstructure invariants.
 
-**TODO:** Insert `ask_ladder_violation.png` and identify the precise price levels involved.
+![Case 1: Ask Price Ladder Violation](outputs_failure_cases_v3_3/ask_ladder_violation.png)
+
+*Figure 1. Generated order-book sequence with an ask-price ladder violation (index 0). Real and generated sequences are independent samples rather than temporally aligned observations.*
+
 
 ### 8.3 Case 2 — Wide Spread
 
@@ -435,7 +449,11 @@ Instead, the overall spread overestimation conclusion is supported by the aggreg
 
 This case illustrates the importance of distinguishing population-level distribution errors from differences between independent individual samples.
 
-**TODO:** Insert `wide_spread.png`.
+
+![Case 2: Wide Spread](outputs_failure_cases_v3_3/wide_spread.png)
+
+*Figure 2. A generated sequence selected for its relatively wide mean bid–ask spread (index 460). The reference real sequence is not temporally aligned with the generated sample.*
+
 
 ### 8.4 Case 3 — Flat Depth
 
@@ -449,7 +467,11 @@ The model appears to generate highly repetitive liquidity patterns rather than t
 
 This is a representative manifestation of mode collapse.
 
-**TODO:** Insert `flat_depth.png` and inspect the measured depth variability.
+
+![Case 3: Flat Depth](outputs_failure_cases_v3_3/flat_depth.png)
+
+*Figure 3. Generated order-book depth sequence with low temporal variability (index 589), illustrating insufficient liquidity-depth diversity.*
+
 
 ### 8.5 Case 4 — Flat Spread Dynamics
 
@@ -461,7 +483,13 @@ Its mean spread is 0.14047, compared with 0.09917 in the independently selected 
 
 This example is consistent with the wider population-level finding that synthetic spreads are less variable than real spreads.
 
-**TODO:** Insert `flat_spread.png` and report the sequence-specific spread standard deviation.
+
+
+![Case 4: Flat Spread Dynamics](outputs_failure_cases_v3_3/flat_spread.png)
+
+*Figure 4. Generated order-book sequence with low spread variability (index 1337), illustrating insufficient spread dynamics.*
+
+
 
 ### 8.6 Case 5 — Typical Generated Depth
 
@@ -475,7 +503,10 @@ It also contains one ask-price ordering violation.
 
 This illustrates how synthetic snapshots can appear broadly plausible while remaining repetitive or violating price-level ordering.
 
-**TODO:** Insert `typical_generated_depth.png`.
+![Case 5: Typical Generated Depth](outputs_failure_cases_v3_3/typical_generated_depth.png)
+
+*Figure 5. A representative generated depth pattern (index 825), illustrating the model's tendency to produce highly similar liquidity structures.*
+
 
 ### 8.7 Summary of Failure Modes
 
@@ -493,43 +524,47 @@ These failures are important because structurally plausible outputs do not neces
 
 ### 9.1 Model Complexity and Training Cost
 
-The final TimeGAN model contains **37,529 trainable parameters** across its five neural network components.
+The final TimeGAN model contains **37,529 parameters** across its five GRU-based neural network components.
 
-The final V3.3 experiment used CPU-based training, with two embedding epochs, two supervisor epochs, and ten joint adversarial training epochs.
+The final experiment was conducted on CPU using two embedding pretraining epochs, two supervisor pretraining epochs, and ten joint adversarial training epochs.
 
 | Measurement | Result |
 |---|---:|
 | Model parameters | 37,529 |
 | Training device | CPU |
-| Embedding pretraining epochs | 2 |
-| Supervisor pretraining epochs | 2 |
+| Embedding epochs | 2 |
+| Supervisor epochs | 2 |
 | Joint training epochs | 10 |
-| Total training time | 460.38 seconds |
+| Total training runtime | 460.38 seconds |
 
-### 9.2 Inference Performance
+### 9.2 CPU Inference Performance
 
-Inference performance was measured on CPU using a batch size of 64, with 10 warm-up batches followed by 100 timed batches.
+Inference performance was measured using a batch size of 64, with 10 warm-up batches followed by 100 timed batches.
 
 | Measurement | Result |
 |---|---:|
 | Generated sequences | 6,400 |
-| Time steps per sequence | 24 |
+| Sequence length | 24 |
 | Features per time step | 40 |
 | Total inference time | 0.5928 seconds |
 | Average latency per sequence | 0.0926 ms |
 | Generation throughput | 10,795.45 sequences/second |
 
-The reported latency represents average per-sequence throughput under batched inference, rather than standalone single-sequence inference latency.
+The reported per-sequence latency is an average derived from batched inference rather than a direct single-sequence latency measurement.
 
-These results indicate that the model can generate synthetic sequences efficiently on CPU. However, the quality evaluation demonstrates that computational efficiency alone does not guarantee realistic financial simulations.
+### 9.3 GPU Memory Usage
 
-### 9.3 GPU Resource Usage
+The final model was trained and profiled on CPU. Therefore, peak GPU VRAM consumption during full-model training has not been measured.
 
-The final V3.3 training and inference measurements were obtained on CPU. Therefore, peak GPU VRAM usage for the final model has not yet been measured.
+A preliminary simplified GPU experiment was conducted on an NVIDIA A100 GPU, but its results are not directly comparable with the final 40-feature model.
 
-A preliminary simplified GPU experiment was performed on an NVIDIA A100 GPU, but its resource measurements are not directly comparable to those of the final model.
+GPU memory profiling of the final model remains an optional additional experiment for the resource analysis.
 
-**TODO:** Measure peak GPU VRAM for the full 40-feature TimeGAN model if GPU resources are available.
+### 9.4 Efficiency versus Generative Quality
+
+Although the model supports fast CPU inference, the generated sequences exhibit substantial distributional mismatch and limited diversity.
+
+Therefore, computational efficiency alone does not justify deployment for realistic market simulation or algorithmic trading backtesting.
 
 ## 10. Reproducibility
 
@@ -549,20 +584,29 @@ The implementation contains the following core files:
 | `ssim_evaluation.py` | Depth heatmap SSIM |
 | `baseline_evaluation.py` | Baseline comparison |
 | `failure_cases.py` | Representative failure case selection |
-| `predict.py` | **TODO: Complete standalone inference and visualisation script** |
+| `predict.py` | Standalone model inference and order-book visualisation |
 | `README.md` | Documentation and experimental report |
 
 ### 10.2 Dependencies
 
-The implementation uses Python and the following libraries:
+The project was developed and tested in a Python virtual environment on the UQ Rangpur computing cluster.
 
-- PyTorch
-- NumPy
-- pandas
-- Matplotlib
-- scikit-image
+The following software versions were recorded from the working environment:
 
-**TODO:** Record exact tested versions and provide a reproducible `requirements.txt`.
+| Software | Version |
+|---|---|
+| Python | 3.11.13 |
+| PyTorch | 2.11.0+cu128 |
+| NumPy | 2.4.6 |
+| pandas | 3.0.6 |
+| Matplotlib | 3.11.2 |
+| scikit-image | 0.26.0 |
+
+The final TimeGAN training, generation, and evaluation experiments were successfully executed on CPU.
+
+Although the installed PyTorch package includes CUDA 12.8 support, CUDA availability depends on the GPU node and its installed NVIDIA driver. GPU execution was not required for the reported final CPU experiments.
+
+For reproducibility, the exact software environment should be considered alongside the dataset version, random seed, preprocessing configuration, model architecture, and training hyperparameters.
 
 ### 10.3 Training
 
@@ -668,19 +712,27 @@ The implementation was executed and tested on the Rangpur computing environment.
 
 The final implementation and scientific claims remain the student's responsibility.
 
-**TODO:** Add details of any additional independent code review, manual verification, or modifications actually performed.
+
+Verification included Python syntax checks, synthetic-data sanity tests, full model training on Rangpur, checkpoint loading, independent inference, market constraint validation, SSIM evaluation, and baseline comparisons. The reported metrics were obtained from actual program outputs rather than assumed model performance.
+
+The experiments also identified limitations in the generated data, including mode collapse, distribution mismatch, and incomplete mid-price return modelling. These issues are explicitly documented rather than presented as successful results.
+
 
 ## 13. References
 
-**TODO:** Add verified references for:
+[1] J. Yoon, D. Jarrett, and M. van der Schaar, "Time-series Generative Adversarial Networks," *Advances in Neural Information Processing Systems (NeurIPS)*, vol. 32, 2019.  
+https://papers.neurips.cc/paper_files/paper/2019/hash/c9efe5f26cd17ba6216bbe2a7d26d490-Abstract.html
 
-1. The original TimeGAN publication.
-2. The LOBSTER dataset and data documentation.
-3. Any external code implementations or methodologies adapted in this project.
-4. The SSIM evaluation method.
-5. The COMP3710/COMP7710 Project 7 assessment specification.
+[2] LOBSTER, "Limit Order Book System - The Efficient Reconstructor: Data Samples," LOBSTER Data.  
+https://data.lobsterdata.com/info/DataSamples.php
 
-Only sources genuinely consulted and used should be cited.
+[3] LOBSTER, "LOBSTER Output Structure and Data Format," LOBSTER Data.  
+https://data.lobsterdata.com/info/DataStructure.php
+
+[4] Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, "Image Quality Assessment: From Error Visibility to Structural Similarity," *IEEE Transactions on Image Processing*, vol. 13, no. 4, pp. 600–612, 2004. doi: 10.1109/TIP.2003.819861.  
+https://doi.org/10.1109/TIP.2003.819861
+
+[5] The University of Queensland, School of Electrical Engineering and Computer Science, "COMP3710 / COMP7710 Report: Pattern Recognition — Working Prototype Project in the Era of Artificial Intelligence," Version 2.2 Final Assessment Specification, 2026. Course assessment document.
 
 ---
 
