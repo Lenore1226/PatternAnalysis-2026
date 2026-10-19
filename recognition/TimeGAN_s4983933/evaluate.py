@@ -2,7 +2,8 @@
 COMP3710 TimeGAN - Initial Evaluation
 
 Generate synthetic order-book sequences and compare their normalized
-feature distributions with real data. Supports V1 and V2 preprocessing.
+feature distributions with real data. Supports V1/V2 preprocessing and
+original/V3.2 model architectures.
 """
 
 import argparse
@@ -14,6 +15,7 @@ import torch
 from dataset import prepare_dataset
 from dataset_v2 import prepare_dataset_v2
 from modules import TimeGAN
+from modules_v3_2 import TimeGANV32
 
 
 def load_model(checkpoint_path, device):
@@ -23,7 +25,15 @@ def load_model(checkpoint_path, device):
         weights_only=True,
     )
 
-    model = TimeGAN(
+    model_version = checkpoint.get("model_version", "original")
+    if model_version == "v3.2":
+        model_class = TimeGANV32
+    elif model_version == "original":
+        model_class = TimeGAN
+    else:
+        raise ValueError(f"Unknown model version: {model_version}")
+
+    model = model_class(
         feature_dim=checkpoint["feature_dim"],
         hidden_dim=checkpoint["hidden_dim"],
         noise_dim=checkpoint["noise_dim"],
@@ -32,7 +42,6 @@ def load_model(checkpoint_path, device):
 
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-
     return model, checkpoint
 
 
@@ -42,14 +51,12 @@ def generate_samples(model, count, seq_len, device, batch_size=128):
 
     for start in range(0, count, batch_size):
         current_size = min(batch_size, count - start)
-
         noise = torch.rand(
             current_size,
             seq_len,
             model.noise_dim,
             device=device,
         )
-
         generated = model.generate(noise)
         batches.append(generated.cpu().numpy())
 
@@ -60,13 +67,11 @@ def histogram_kl(real, generated, bins=50, eps=1e-8):
     """Estimate feature-wise KL divergence using histograms."""
     real_flat = real.reshape(-1, real.shape[-1])
     fake_flat = generated.reshape(-1, generated.shape[-1])
-
     values = []
 
     for feature in range(real_flat.shape[1]):
         a = real_flat[:, feature]
         b = fake_flat[:, feature]
-
         lower = min(a.min(), b.min())
         upper = max(a.max(), b.max())
 
@@ -75,16 +80,12 @@ def histogram_kl(real, generated, bins=50, eps=1e-8):
             continue
 
         edges = np.linspace(lower, upper, bins + 1)
-
         p, _ = np.histogram(a, bins=edges)
         q, _ = np.histogram(b, bins=edges)
-
         p = p.astype(np.float64) + eps
         q = q.astype(np.float64) + eps
-
         p /= p.sum()
         q /= q.sum()
-
         values.append(np.sum(p * np.log(p / q)))
 
     return np.array(values)
@@ -98,13 +99,11 @@ def evaluate(real, generated):
 
     real_mean = real.mean(axis=(0, 1))
     fake_mean = generated.mean(axis=(0, 1))
-
     real_std = real.std(axis=(0, 1))
     fake_std = generated.std(axis=(0, 1))
 
     mean_mae = np.mean(np.abs(real_mean - fake_mean))
     std_mae = np.mean(np.abs(real_std - fake_std))
-
     kl_values = histogram_kl(real, generated)
 
     return {
@@ -123,13 +122,12 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--output-dir", default="outputs")
-
     args = parser.parse_args()
-    device = torch.device(args.device)
 
-    # Load checkpoint first, so the evaluation uses the matching dataset.
+    device = torch.device(args.device)
     model, checkpoint = load_model(args.checkpoint, device)
     dataset_version = checkpoint.get("dataset_version", "v1")
+    model_version = checkpoint.get("model_version", "original")
 
     if dataset_version == "v2":
         dataset = prepare_dataset_v2(args.data_dir)
@@ -152,24 +150,23 @@ def main():
         device=device,
         batch_size=args.batch_size,
     )
-
     results = evaluate(real, generated)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_file = output_dir / f"generated_{dataset_version}.npy"
+    # Include architecture to avoid overwriting V3.1 with V3.2 samples.
+    output_file = output_dir / f"generated_{dataset_version}_{model_version.replace('.', '_')}.npy"
     np.save(output_file, generated)
 
     print("Checkpoint stage:", checkpoint["stage"])
     print("Dataset version:", dataset_version)
+    print("Model version:", model_version)
     print("Real shape:", real.shape)
     print("Generated shape:", generated.shape)
 
     print("\n=== Initial Evaluation Results ===")
     for key, value in results.items():
         print(f"{key}: {value:.6f}")
-
     print("\nGenerated sequences saved to:", output_file)
 
 
