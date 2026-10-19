@@ -491,38 +491,45 @@ These failures are important because structurally plausible outputs do not neces
 
 ## 9. Computational Resource Analysis
 
-### 9.1 Measured Training Runtime
+### 9.1 Model Complexity and Training Cost
 
-The final TimeGAN V3.3 experiment was trained on CPU.
+The final TimeGAN model contains **37,529 trainable parameters** across its five neural network components.
+
+The final V3.3 experiment used CPU-based training, with two embedding epochs, two supervisor epochs, and ten joint adversarial training epochs.
 
 | Measurement | Result |
 |---|---:|
-| Embedding epochs | 2 |
-| Supervisor epochs | 2 |
-| Joint epochs | 10 |
-| Total runtime | 460.38 seconds |
+| Model parameters | 37,529 |
 | Training device | CPU |
+| Embedding pretraining epochs | 2 |
+| Supervisor pretraining epochs | 2 |
+| Joint training epochs | 10 |
+| Total training time | 460.38 seconds |
 
-A separate preliminary simplified experiment was executed on an NVIDIA A100 GPU.
+### 9.2 Inference Performance
 
-| Preliminary GPU Measurement | Result |
+Inference performance was measured on CPU using a batch size of 64, with 10 warm-up batches followed by 100 timed batches.
+
+| Measurement | Result |
 |---|---:|
-| GPU | NVIDIA A100 40GB |
-| Simplified prototype runtime | 3.96 seconds |
-| Peak allocated GPU memory | 27.15 MB |
+| Generated sequences | 6,400 |
+| Time steps per sequence | 24 |
+| Features per time step | 40 |
+| Total inference time | 0.5928 seconds |
+| Average latency per sequence | 0.0926 ms |
+| Generation throughput | 10,795.45 sequences/second |
 
-The preliminary GPU statistics are not measurements of the final full-feature model.
+The reported latency represents average per-sequence throughput under batched inference, rather than standalone single-sequence inference latency.
 
-### 9.2 Remaining Resource Measurements
+These results indicate that the model can generate synthetic sequences efficiently on CPU. However, the quality evaluation demonstrates that computational efficiency alone does not guarantee realistic financial simulations.
 
-The following information must be measured before completing the final resource profile:
+### 9.3 GPU Resource Usage
 
-- Final model parameter count.
-- Generation latency and sequences per second.
-- Peak GPU VRAM for the full model, where GPU testing is available.
-- Exact Python and package versions.
+The final V3.3 training and inference measurements were obtained on CPU. Therefore, peak GPU VRAM usage for the final model has not yet been measured.
 
-**TODO:** Insert verified resource measurements and training curves.
+A preliminary simplified GPU experiment was performed on an NVIDIA A100 GPU, but its resource measurements are not directly comparable to those of the final model.
+
+**TODO:** Measure peak GPU VRAM for the full 40-feature TimeGAN model if GPU resources are available.
 
 ## 10. Reproducibility
 
