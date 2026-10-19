@@ -189,6 +189,172 @@ def train_supervisor(model, train_loader, val_loader,
     return history, optimizer
 
 
+def moment_loss(real, fake):
+    """Match feature-wise means and standard deviations."""
+    real_mean = real.mean(dim=(0, 1))
+    fake_mean = fake.mean(dim=(0, 1))
+
+    real_std = real.std(dim=(0, 1), unbiased=False)
+    fake_std = fake.std(dim=(0, 1), unbiased=False)
+
+    mean_error = torch.mean(torch.abs(real_mean - fake_mean))
+    std_error = torch.mean(torch.abs(real_std - fake_std))
+
+    return mean_error + std_error
+
+
+def joint_losses(model, real, noise):
+    """
+    Compute the main TimeGAN joint-training losses.
+
+    This function calculates losses but does not update weights.
+    """
+    mse = nn.MSELoss()
+    bce = nn.BCEWithLogitsLoss()
+
+    # Real-data latent representations
+    h = model.embedder(real)
+    x_tilde = model.recovery(h)
+    h_supervised = model.supervisor(h)
+
+    # Synthetic latent representations
+    e_hat = model.generator(noise)
+    h_hat = model.supervisor(e_hat)
+    x_hat = model.recovery(h_hat)
+
+    # Discriminator predictions (logits)
+    y_real = model.discriminator(h)
+    y_fake = model.discriminator(h_hat)
+    y_fake_e = model.discriminator(e_hat)
+
+    # 1. Reconstruction loss
+    loss_recon = mse(real, x_tilde)
+
+    # 2. Supervised temporal loss
+    loss_sup = mse(
+        h_supervised[:, :-1, :],
+        h[:, 1:, :]
+    )
+
+    # 3. Discriminator loss
+    loss_d_real = bce(y_real, torch.ones_like(y_real))
+    loss_d_fake = bce(y_fake, torch.zeros_like(y_fake))
+    loss_d_fake_e = bce(
+        y_fake_e, torch.zeros_like(y_fake_e)
+    )
+
+    loss_d = loss_d_real + loss_d_fake + loss_d_fake_e
+
+    # 4. Generator adversarial loss
+    loss_g_adv = (
+        bce(y_fake, torch.ones_like(y_fake))
+        + bce(y_fake_e, torch.ones_like(y_fake_e))
+    )
+
+    # 5. Moment matching
+    loss_moment = moment_loss(real, x_hat)
+
+    return {
+        "reconstruction": loss_recon,
+        "supervised": loss_sup,
+        "discriminator": loss_d,
+        "generator_adversarial": loss_g_adv,
+        "moment": loss_moment,
+    }
+
+
+
+def joint_train_step(model, real, optimizers):
+    """One simplified TimeGAN joint training step."""
+    mse = nn.MSELoss()
+    bce = nn.BCEWithLogitsLoss()
+
+    opt_g, opt_er, opt_d = optimizers
+    batch_size, seq_len, _ = real.shape
+
+    def sample_noise():
+        return torch.rand(
+            batch_size, seq_len, model.noise_dim,
+            device=real.device
+        )
+
+    # 1. Update Generator and Supervisor
+    for p in model.discriminator.parameters():
+        p.requires_grad_(False)
+
+    z = sample_noise()
+    e_fake = model.generator(z)
+    h_fake = model.supervisor(e_fake)
+    x_fake = model.recovery(h_fake)
+
+    with torch.no_grad():
+        h_real = model.embedder(real)
+
+    h_pred = model.supervisor(h_real)
+
+    adv = bce(
+        model.discriminator(h_fake),
+        torch.ones(batch_size, seq_len, 1, device=real.device)
+    )
+    adv += bce(
+        model.discriminator(e_fake),
+        torch.ones(batch_size, seq_len, 1, device=real.device)
+    )
+
+    sup = mse(h_pred[:, :-1], h_real[:, 1:])
+    moments = moment_loss(real, x_fake)
+
+    loss_g = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moments
+
+    opt_g.zero_grad()
+    loss_g.backward()
+    opt_g.step()
+
+    for p in model.discriminator.parameters():
+        p.requires_grad_(True)
+
+    # 2. Update Embedder and Recovery
+    h_real = model.embedder(real)
+    x_recon = model.recovery(h_real)
+    h_pred = model.supervisor(h_real)
+
+    recon = mse(real, x_recon)
+    sup_er = mse(h_pred[:, :-1], h_real[:, 1:])
+
+    loss_er = 10 * torch.sqrt(recon + 1e-8) + 0.1 * sup_er
+
+    opt_er.zero_grad()
+    loss_er.backward()
+    opt_er.step()
+
+    # 3. Update Discriminator
+    with torch.no_grad():
+        h_real = model.embedder(real)
+        e_fake = model.generator(sample_noise())
+        h_fake = model.supervisor(e_fake)
+
+    real_logits = model.discriminator(h_real)
+    fake_logits = model.discriminator(h_fake)
+    fake_e_logits = model.discriminator(e_fake)
+
+    loss_d = (
+        bce(real_logits, torch.ones_like(real_logits))
+        + bce(fake_logits, torch.zeros_like(fake_logits))
+        + bce(fake_e_logits, torch.zeros_like(fake_e_logits))
+    )
+
+    opt_d.zero_grad()
+    loss_d.backward()
+    opt_d.step()
+
+    return {
+        "generator": loss_g.item(),
+        "embedder": loss_er.item(),
+        "discriminator": loss_d.item(),
+    }
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
