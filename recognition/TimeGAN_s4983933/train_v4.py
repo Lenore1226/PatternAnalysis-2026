@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from dataset import prepare_dataset
 from dataset_v2 import prepare_dataset_v2
 from dataset_v3 import prepare_dataset_v3
+from dataset_v4 import prepare_dataset_v4
 from modules import TimeGAN
 from modules_v3_2 import TimeGANV32
 
@@ -507,7 +508,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument(
-        "--dataset-version", choices=["v1", "v2", "v3"], default="v3"
+        "--dataset-version", choices=["v1", "v2", "v3", "v4"], default="v3"
     )
     parser.add_argument(
         "--model-version", choices=["original", "v3.2"], default="original"
@@ -531,7 +532,9 @@ def main():
     start = time.time()
     device = torch.device(args.device)
 
-    if args.dataset_version == "v3":
+    if args.dataset_version == "v4":
+        result = prepare_dataset_v4(args.data_dir)
+    elif args.dataset_version == "v3":
         result = prepare_dataset_v3(args.data_dir)
     elif args.dataset_version == "v2":
         result = prepare_dataset_v2(args.data_dir)
@@ -539,6 +542,17 @@ def main():
         result = prepare_dataset(args.data_dir)
 
     print("Dataset version:", args.dataset_version)
+
+    # Keep the fitted return transformation parameters with checkpoints.
+    # Evaluation must use the same train-only values, never refit on test data.
+    normalizer_metadata = {}
+    if args.dataset_version == "v4":
+        n = result["normalizer"]
+        normalizer_metadata = {
+            "return_scale": float(n.return_scale),
+            "return_mean": float(n.return_mean),
+            "return_std": float(n.return_std),
+        }
 
     train_loader = create_loader(
         result["train"], args.batch_size, shuffle=True
@@ -582,6 +596,7 @@ def main():
         "stage": "embedding",
         "dataset_version": args.dataset_version,
         "model_version": args.model_version,
+        **normalizer_metadata,
     }, output_dir / "embedding.pt")
 
     supervisor_history, supervisor_optimizer = train_supervisor(
@@ -601,6 +616,7 @@ def main():
         "stage": "supervisor",
         "dataset_version": args.dataset_version,
         "model_version": args.model_version,
+        **normalizer_metadata,
     }, output_dir / "supervisor.pt")
 
     joint_history = train_joint(
@@ -615,7 +631,9 @@ def main():
         "joint_lr": args.joint_lr,
         "generator_updates": args.generator_updates,
         "training_variant": (
-            "v4-41feature-identity-generator"
+            "v4.1-asinh-zscore-identity-generator"
+            if args.dataset_version == "v4" and args.model_version == "v3.2"
+            else "v4-41feature-identity-generator"
             if args.dataset_version == "v3" and args.model_version == "v3.2"
             else ("v3.2-identity-generator" if args.model_version == "v3.2"
                   else "original-generator")
@@ -627,6 +645,7 @@ def main():
         "stage": "joint",
         "dataset_version": args.dataset_version,
         "model_version": args.model_version,
+        **normalizer_metadata,
     }, output_dir / "timegan_joint.pt")
 
     print("\nSaved checkpoints:")
