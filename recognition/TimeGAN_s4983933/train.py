@@ -16,6 +16,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from dataset import prepare_dataset
+from dataset_v2 import prepare_dataset_v2
 from modules import TimeGAN
 
 
@@ -429,45 +430,45 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001):
     return history
 
 
-
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
+    parser.add_argument(
+        "--dataset-version", choices=["v1", "v2"], default="v1"
+    )
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--supervisor-epochs",
-                        type=int, default=10)
+    parser.add_argument("--supervisor-epochs", type=int, default=10)
+    parser.add_argument("--joint-epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--output-dir",
-                        default="checkpoints")
-
+    parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
     set_seed(42)
     start = time.time()
-
     device = torch.device(args.device)
 
-    result = prepare_dataset(args.data_dir)
+    if args.dataset_version == "v2":
+        result = prepare_dataset_v2(args.data_dir)
+    else:
+        result = prepare_dataset(args.data_dir)
+
+    print("Dataset version:", args.dataset_version)
 
     train_loader = create_loader(
         result["train"], args.batch_size, shuffle=True
     )
-    val_loader = create_loader(
-        result["val"], args.batch_size
-    )
+    val_loader = create_loader(result["val"], args.batch_size)
 
     feature_dim = result["train"].shape[2]
-
     model = TimeGAN(
         feature_dim=feature_dim,
         hidden_dim=24,
         noise_dim=feature_dim,
     ).to(device)
 
-    output_dir = Path(args.output_dir)
+    # Prevent V2 training from silently overwriting V1 checkpoints.
+    output_dir = Path(args.output_dir or f"checkpoints_{args.dataset_version}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Device:", device)
@@ -475,11 +476,9 @@ def main():
     print("Validation sequences:", len(result["val"]))
 
     embedding_history, embedding_optimizer = train_embedding(
-        model, train_loader, val_loader,
-        device, epochs=args.epochs
+        model, train_loader, val_loader, device, epochs=args.epochs
     )
 
-    # Save Stage 1 before starting Stage 2.
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": embedding_optimizer.state_dict(),
@@ -489,6 +488,7 @@ def main():
         "noise_dim": feature_dim,
         "num_layers": 2,
         "stage": "embedding",
+        "dataset_version": args.dataset_version,
     }, output_dir / "embedding.pt")
 
     supervisor_history, supervisor_optimizer = train_supervisor(
@@ -506,15 +506,11 @@ def main():
         "noise_dim": feature_dim,
         "num_layers": 2,
         "stage": "supervisor",
+        "dataset_version": args.dataset_version,
     }, output_dir / "supervisor.pt")
 
-
-    
     joint_history = train_joint(
-        model,
-        train_loader,
-        device,
-        epochs=5,
+        model, train_loader, device, epochs=args.joint_epochs
     )
 
     torch.save({
@@ -525,17 +521,15 @@ def main():
         "noise_dim": feature_dim,
         "num_layers": 2,
         "stage": "joint",
+        "dataset_version": args.dataset_version,
     }, output_dir / "timegan_joint.pt")
-
-    print("Joint checkpoint saved:",
-          output_dir / "timegan_joint.pt")
 
     print("\nSaved checkpoints:")
     print(output_dir / "embedding.pt")
     print(output_dir / "supervisor.pt")
-    print("Runtime (seconds):",
-          round(time.time() - start, 2))
-    print("Stage 1 and Stage 2 completed!")
+    print(output_dir / "timegan_joint.pt")
+    print("Runtime (seconds):", round(time.time() - start, 2))
+    print("Stages 1, 2 and 3 completed!")
 
 
 if __name__ == "__main__":
