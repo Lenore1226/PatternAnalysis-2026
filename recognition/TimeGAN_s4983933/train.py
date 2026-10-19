@@ -355,6 +355,83 @@ def joint_train_step(model, real, optimizers):
 
 
 
+def train_joint(model, train_loader, device, epochs=5, lr=0.001):
+    """Run joint adversarial training over multiple epochs."""
+
+    opt_g = torch.optim.Adam(
+        list(model.generator.parameters())
+        + list(model.supervisor.parameters()),
+        lr=lr,
+    )
+
+    opt_er = torch.optim.Adam(
+        list(model.embedder.parameters())
+        + list(model.recovery.parameters()),
+        lr=lr,
+    )
+
+    opt_d = torch.optim.Adam(
+        model.discriminator.parameters(),
+        lr=lr,
+    )
+
+    history = []
+
+    print("\n=== Stage 3: Joint Adversarial Training ===",
+          flush=True)
+
+    for epoch in range(epochs):
+        model.train()
+
+        total_g = 0.0
+        total_er = 0.0
+        total_d = 0.0
+        count = 0
+
+        for (batch,) in train_loader:
+            batch = batch.to(device)
+
+            losses = joint_train_step(
+                model, batch, (opt_g, opt_er, opt_d)
+            )
+
+            n = len(batch)
+            total_g += losses["generator"] * n
+            total_er += losses["embedder"] * n
+            total_d += losses["discriminator"] * n
+            count += n
+
+        epoch_losses = {
+            "epoch": epoch + 1,
+            "generator": total_g / count,
+            "embedder": total_er / count,
+            "discriminator": total_d / count,
+        }
+
+        history.append(epoch_losses)
+
+        print(
+            f"Epoch {epoch + 1}/{epochs} | "
+            f"G: {epoch_losses['generator']:.4f} | "
+            f"ER: {epoch_losses['embedder']:.4f} | "
+            f"D: {epoch_losses['discriminator']:.4f}",
+            flush=True,
+        )
+
+        if not all(
+            np.isfinite(epoch_losses[k])
+            for k in ("generator", "embedder", "discriminator")
+        ):
+            raise RuntimeError(
+                "Non-finite loss detected during joint training."
+            )
+
+    return history
+
+
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
@@ -430,6 +507,28 @@ def main():
         "num_layers": 2,
         "stage": "supervisor",
     }, output_dir / "supervisor.pt")
+
+
+    
+    joint_history = train_joint(
+        model,
+        train_loader,
+        device,
+        epochs=5,
+    )
+
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "joint_history": joint_history,
+        "feature_dim": feature_dim,
+        "hidden_dim": 24,
+        "noise_dim": feature_dim,
+        "num_layers": 2,
+        "stage": "joint",
+    }, output_dir / "timegan_joint.pt")
+
+    print("Joint checkpoint saved:",
+          output_dir / "timegan_joint.pt")
 
     print("\nSaved checkpoints:")
     print(output_dir / "embedding.pt")
