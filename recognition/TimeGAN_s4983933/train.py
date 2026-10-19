@@ -428,6 +428,7 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001,
 
     history = []
     print("Generator updates per batch:", generator_updates)
+    print("Stage 3 learning rate:", lr)
 
     print("\n=== Stage 3: Joint Adversarial Training ===",
           flush=True)
@@ -513,6 +514,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--supervisor-epochs", type=int, default=10)
     parser.add_argument("--joint-epochs", type=int, default=5)
+    parser.add_argument(
+        "--joint-lr", type=float, default=0.001,
+        help="Learning rate for Stage 3 joint training (default: 0.001)",
+    )
     parser.add_argument("--generator-updates", type=int, default=1,
                         help="Generator/Supervisor steps per joint batch")
     parser.add_argument("--batch-size", type=int, default=64)
@@ -521,6 +526,8 @@ def main():
     args = parser.parse_args()
     if args.generator_updates < 1:
         parser.error("--generator-updates must be at least 1")
+    if not np.isfinite(args.joint_lr) or args.joint_lr <= 0:
+        parser.error("--joint-lr must be a positive finite number")
 
     set_seed(42)
     start = time.time()
@@ -598,15 +605,21 @@ def main():
 
     joint_history = train_joint(
         model, train_loader, device, epochs=args.joint_epochs,
+        lr=args.joint_lr,
         generator_updates=args.generator_updates,
     )
 
     torch.save({
         "model_state_dict": model.state_dict(),
         "joint_history": joint_history,
+        "joint_epochs": args.joint_epochs,
+        "embedding_epochs": args.epochs,
+        "supervisor_epochs": args.supervisor_epochs,
         "generator_updates": args.generator_updates,
+        "joint_lr": args.joint_lr,
         "training_variant": (
-            "v3.2-identity-generator" if args.model_version == "v3.2"
+            "v3.3-joint-lr-experiment" if args.joint_lr != 0.001
+            else "v3.2-identity-generator" if args.model_version == "v3.2"
             else "v3.1-generator-frequency"
         ),
         "feature_dim": feature_dim,
