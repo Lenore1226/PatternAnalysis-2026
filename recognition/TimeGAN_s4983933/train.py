@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from dataset import prepare_dataset
 from dataset_v2 import prepare_dataset_v2
 from modules import TimeGAN
+from modules_v3_2 import TimeGANV32
 
 
 def set_seed(seed=42):
@@ -271,56 +272,60 @@ def set_requires_grad(network, enabled):
         parameter.requires_grad_(enabled)
 
 
-def joint_train_step(model, real, optimizers):
-    """One simplified TimeGAN joint training step with isolated updates."""
+def joint_train_step(model, real, optimizers, generator_updates=1):
+    """One joint batch: G/S repeated, then E/R once and D once."""
+    if generator_updates < 1:
+        raise ValueError("generator_updates must be >= 1")
     mse = nn.MSELoss()
     bce = nn.BCEWithLogitsLoss()
-
     opt_g, opt_er, opt_d = optimizers
     batch_size, seq_len, _ = real.shape
 
     def sample_noise():
         return torch.rand(
             batch_size, seq_len, model.noise_dim,
-            device=real.device
+            device=real.device,
         )
 
-    # 1. Update Generator and Supervisor only.
+    # Generator/Supervisor steps: fresh forward and backward on every update.
     set_requires_grad(model.discriminator, False)
     set_requires_grad(model.embedder, False)
     set_requires_grad(model.recovery, False)
     set_requires_grad(model.generator, True)
     set_requires_grad(model.supervisor, True)
 
-    z = sample_noise()
-    e_fake = model.generator(z)
-    h_fake = model.supervisor(e_fake)
-    # Frozen Recovery still propagates gradients to Generator/Supervisor.
-    x_fake = model.recovery(h_fake)
-
     with torch.no_grad():
         h_real = model.embedder(real)
 
-    h_pred = model.supervisor(h_real)
-    adv = bce(
-        model.discriminator(h_fake),
-        torch.ones(batch_size, seq_len, 1, device=real.device)
-    )
-    adv += bce(
-        model.discriminator(e_fake),
-        torch.ones(batch_size, seq_len, 1, device=real.device)
-    )
-    sup = mse(h_pred[:, :-1], h_real[:, 1:])
-    moments = moment_loss(real, x_fake)
-    loss_g = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moments
+    g_total = adv_total = sup_total = moment_total = 0.0
+    for _ in range(generator_updates):
+        z = sample_noise()
+        e_fake = model.generator(z)
+        h_fake = model.supervisor(e_fake)
+        x_fake = model.recovery(h_fake)
+        h_pred = model.supervisor(h_real)
 
-    opt_g.zero_grad(set_to_none=True)
-    loss_g.backward()
-    opt_g.step()
-    # Remove stale gradients before switching training stages.
-    opt_g.zero_grad(set_to_none=True)
+        logits_h = model.discriminator(h_fake)
+        logits_e = model.discriminator(e_fake)
+        adv = (
+            bce(logits_h, torch.ones_like(logits_h))
+            + bce(logits_e, torch.ones_like(logits_e))
+        )
+        sup = mse(h_pred[:, :-1, :], h_real[:, 1:, :])
+        moments = moment_loss(real, x_fake)
+        loss_g = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moments
 
-    # 2. Update Embedder and Recovery only.
+        opt_g.zero_grad(set_to_none=True)
+        loss_g.backward()
+        opt_g.step()
+        opt_g.zero_grad(set_to_none=True)
+
+        g_total += loss_g.item()
+        adv_total += adv.item()
+        sup_total += sup.item()
+        moment_total += moments.item()
+
+    # Embedder/Recovery step: Supervisor is fixed but transmits gradients.
     set_requires_grad(model.generator, False)
     set_requires_grad(model.supervisor, False)
     set_requires_grad(model.embedder, True)
@@ -330,7 +335,7 @@ def joint_train_step(model, real, optimizers):
     x_recon = model.recovery(h_real)
     h_pred = model.supervisor(h_real)
     recon = mse(real, x_recon)
-    sup_er = mse(h_pred[:, :-1], h_real[:, 1:])
+    sup_er = mse(h_pred[:, :-1, :], h_real[:, 1:, :])
     loss_er = 10 * torch.sqrt(recon + 1e-8) + 0.1 * sup_er
 
     opt_er.zero_grad(set_to_none=True)
@@ -338,11 +343,10 @@ def joint_train_step(model, real, optimizers):
     opt_er.step()
     opt_er.zero_grad(set_to_none=True)
 
-    # 3. Update Discriminator only.
+    # Discriminator step: no gradient should reach the other networks.
     set_requires_grad(model.embedder, False)
     set_requires_grad(model.recovery, False)
     set_requires_grad(model.discriminator, True)
-
     with torch.no_grad():
         h_real = model.embedder(real)
         e_fake = model.generator(sample_noise())
@@ -356,31 +360,53 @@ def joint_train_step(model, real, optimizers):
         + bce(fake_logits, torch.zeros_like(fake_logits))
         + bce(fake_e_logits, torch.zeros_like(fake_e_logits))
     )
-
     opt_d.zero_grad(set_to_none=True)
     loss_d.backward()
     opt_d.step()
     opt_d.zero_grad(set_to_none=True)
 
-    # Restore all components for the next batch / other model operations.
     for network in (
-        model.generator,
-        model.supervisor,
-        model.embedder,
-        model.recovery,
-        model.discriminator,
+        model.generator, model.supervisor, model.embedder,
+        model.recovery, model.discriminator,
     ):
         set_requires_grad(network, True)
 
     return {
-        "generator": loss_g.item(),
+        "generator": g_total / generator_updates,
+        "generator_adversarial": adv_total / generator_updates,
+        "supervised": sup_total / generator_updates,
+        "moment": moment_total / generator_updates,
         "embedder": loss_er.item(),
         "discriminator": loss_d.item(),
     }
 
 
+@torch.no_grad()
+def measure_diversity(model, device, seq_len, noise_dim, samples=64):
+    """Compare independent generated samples using a fixed local RNG seed."""
+    was_training = model.training
+    model.eval()
+    try:
+        # fork_rng avoids affecting the global RNG stream used by training.
+        with torch.random.fork_rng(devices=[device] if device.type == "cuda" else []):
+            torch.manual_seed(12345)
+            if device.type == "cuda":
+                torch.cuda.manual_seed_all(12345)
+            z1 = torch.rand(samples, seq_len, noise_dim, device=device)
+            z2 = torch.rand(samples, seq_len, noise_dim, device=device)
+            x1 = model.generate(z1)
+            x2 = model.generate(z2)
+        return {
+            "output_difference": float((x1 - x2).abs().mean().item()),
+            "sample_std": float(x1.std(dim=0, unbiased=False).mean().item()),
+            "temporal_std": float(x1.std(dim=1, unbiased=False).mean().item()),
+        }
+    finally:
+        model.train(was_training)
 
-def train_joint(model, train_loader, device, epochs=5, lr=0.001):
+
+def train_joint(model, train_loader, device, epochs=5, lr=0.001,
+                generator_updates=1):
     """Run joint adversarial training over multiple epochs."""
 
     opt_g = torch.optim.Adam(
@@ -401,6 +427,7 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001):
     )
 
     history = []
+    print("Generator updates per batch:", generator_updates)
 
     print("\n=== Stage 3: Joint Adversarial Training ===",
           flush=True)
@@ -411,19 +438,26 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001):
         total_g = 0.0
         total_er = 0.0
         total_d = 0.0
+        total_adv = 0.0
+        total_sup = 0.0
+        total_moment = 0.0
         count = 0
 
         for (batch,) in train_loader:
             batch = batch.to(device)
 
             losses = joint_train_step(
-                model, batch, (opt_g, opt_er, opt_d)
+                model, batch, (opt_g, opt_er, opt_d),
+                generator_updates=generator_updates,
             )
 
             n = len(batch)
             total_g += losses["generator"] * n
             total_er += losses["embedder"] * n
             total_d += losses["discriminator"] * n
+            total_adv += losses["generator_adversarial"] * n
+            total_sup += losses["supervised"] * n
+            total_moment += losses["moment"] * n
             count += n
 
         epoch_losses = {
@@ -431,7 +465,16 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001):
             "generator": total_g / count,
             "embedder": total_er / count,
             "discriminator": total_d / count,
+            "generator_adversarial": total_adv / count,
+            "supervised": total_sup / count,
+            "moment": total_moment / count,
         }
+        diversity = measure_diversity(
+            model, device,
+            seq_len=train_loader.dataset.tensors[0].shape[1],
+            noise_dim=model.noise_dim,
+        )
+        epoch_losses.update(diversity)
 
         history.append(epoch_losses)
 
@@ -439,13 +482,17 @@ def train_joint(model, train_loader, device, epochs=5, lr=0.001):
             f"Epoch {epoch + 1}/{epochs} | "
             f"G: {epoch_losses['generator']:.4f} | "
             f"ER: {epoch_losses['embedder']:.4f} | "
-            f"D: {epoch_losses['discriminator']:.4f}",
+            f"D: {epoch_losses['discriminator']:.4f} | "
+            f"Adv: {epoch_losses['generator_adversarial']:.4f} | "
+            f"Moment: {epoch_losses['moment']:.4f} | "
+            f"Sample Std: {epoch_losses['sample_std']:.8f} | "
+            f"Noise Sensitivity: {epoch_losses['output_difference']:.10f}",
             flush=True,
         )
 
         if not all(
             np.isfinite(epoch_losses[k])
-            for k in ("generator", "embedder", "discriminator")
+            for k in epoch_losses if k != "epoch"
         ):
             raise RuntimeError(
                 "Non-finite loss detected during joint training."
@@ -460,13 +507,20 @@ def main():
     parser.add_argument(
         "--dataset-version", choices=["v1", "v2"], default="v1"
     )
+    parser.add_argument(
+        "--model-version", choices=["original", "v3.2"], default="original"
+    )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--supervisor-epochs", type=int, default=10)
     parser.add_argument("--joint-epochs", type=int, default=5)
+    parser.add_argument("--generator-updates", type=int, default=1,
+                        help="Generator/Supervisor steps per joint batch")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
+    if args.generator_updates < 1:
+        parser.error("--generator-updates must be at least 1")
 
     set_seed(42)
     start = time.time()
@@ -485,14 +539,21 @@ def main():
     val_loader = create_loader(result["val"], args.batch_size)
 
     feature_dim = result["train"].shape[2]
-    model = TimeGAN(
+    model_class = TimeGANV32 if args.model_version == "v3.2" else TimeGAN
+    model = model_class(
         feature_dim=feature_dim,
         hidden_dim=24,
         noise_dim=feature_dim,
     ).to(device)
+    print("Model version:", args.model_version)
 
     # Prevent V2 training from silently overwriting V1 checkpoints.
-    output_dir = Path(args.output_dir or f"checkpoints_{args.dataset_version}")
+    default_dir = (
+        f"checkpoints_{args.dataset_version}_v3_2"
+        if args.model_version == "v3.2"
+        else f"checkpoints_{args.dataset_version}"
+    )
+    output_dir = Path(args.output_dir or default_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Device:", device)
@@ -513,6 +574,7 @@ def main():
         "num_layers": 2,
         "stage": "embedding",
         "dataset_version": args.dataset_version,
+        "model_version": args.model_version,
     }, output_dir / "embedding.pt")
 
     supervisor_history, supervisor_optimizer = train_supervisor(
@@ -531,21 +593,29 @@ def main():
         "num_layers": 2,
         "stage": "supervisor",
         "dataset_version": args.dataset_version,
+        "model_version": args.model_version,
     }, output_dir / "supervisor.pt")
 
     joint_history = train_joint(
-        model, train_loader, device, epochs=args.joint_epochs
+        model, train_loader, device, epochs=args.joint_epochs,
+        generator_updates=args.generator_updates,
     )
 
     torch.save({
         "model_state_dict": model.state_dict(),
         "joint_history": joint_history,
+        "generator_updates": args.generator_updates,
+        "training_variant": (
+            "v3.2-identity-generator" if args.model_version == "v3.2"
+            else "v3.1-generator-frequency"
+        ),
         "feature_dim": feature_dim,
         "hidden_dim": 24,
         "noise_dim": feature_dim,
         "num_layers": 2,
         "stage": "joint",
         "dataset_version": args.dataset_version,
+        "model_version": args.model_version,
     }, output_dir / "timegan_joint.pt")
 
     print("\nSaved checkpoints:")
