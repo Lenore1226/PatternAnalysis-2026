@@ -1,9 +1,8 @@
-
 """
 COMP3710 TimeGAN - Initial Evaluation
 
-Generate synthetic order-book sequences and compare
-their normalized feature distributions with real data.
+Generate synthetic order-book sequences and compare their normalized
+feature distributions with real data. Supports V1 and V2 preprocessing.
 """
 
 import argparse
@@ -13,6 +12,7 @@ import numpy as np
 import torch
 
 from dataset import prepare_dataset
+from dataset_v2 import prepare_dataset_v2
 from modules import TimeGAN
 
 
@@ -37,9 +37,7 @@ def load_model(checkpoint_path, device):
 
 
 @torch.no_grad()
-def generate_samples(model, count, seq_len, device,
-                     batch_size=128):
-
+def generate_samples(model, count, seq_len, device, batch_size=128):
     batches = []
 
     for start in range(0, count, batch_size):
@@ -60,11 +58,8 @@ def generate_samples(model, count, seq_len, device,
 
 def histogram_kl(real, generated, bins=50, eps=1e-8):
     """Estimate feature-wise KL divergence using histograms."""
-
     real_flat = real.reshape(-1, real.shape[-1])
-    fake_flat = generated.reshape(
-        -1, generated.shape[-1]
-    )
+    fake_flat = generated.reshape(-1, generated.shape[-1])
 
     values = []
 
@@ -130,15 +125,25 @@ def main():
     parser.add_argument("--output-dir", default="outputs")
 
     args = parser.parse_args()
-
     device = torch.device(args.device)
 
-    dataset = prepare_dataset(args.data_dir)
-    real = dataset["test"]
+    # Load checkpoint first, so the evaluation uses the matching dataset.
+    model, checkpoint = load_model(args.checkpoint, device)
+    dataset_version = checkpoint.get("dataset_version", "v1")
 
-    model, checkpoint = load_model(
-        args.checkpoint, device
-    )
+    if dataset_version == "v2":
+        dataset = prepare_dataset_v2(args.data_dir)
+    elif dataset_version == "v1":
+        dataset = prepare_dataset(args.data_dir)
+    else:
+        raise ValueError(f"Unknown dataset version: {dataset_version}")
+
+    real = dataset["test"]
+    if real.shape[-1] != checkpoint["feature_dim"]:
+        raise ValueError(
+            f"Dataset feature count {real.shape[-1]} does not match "
+            f"model feature count {checkpoint['feature_dim']}"
+        )
 
     generated = generate_samples(
         model,
@@ -153,19 +158,19 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    np.save(output_dir / "generated.npy", generated)
+    output_file = output_dir / f"generated_{dataset_version}.npy"
+    np.save(output_file, generated)
 
     print("Checkpoint stage:", checkpoint["stage"])
+    print("Dataset version:", dataset_version)
     print("Real shape:", real.shape)
     print("Generated shape:", generated.shape)
 
     print("\n=== Initial Evaluation Results ===")
-
     for key, value in results.items():
         print(f"{key}: {value:.6f}")
 
-    print("\nGenerated sequences saved to:",
-          output_dir / "generated.npy")
+    print("\nGenerated sequences saved to:", output_file)
 
 
 if __name__ == "__main__":

@@ -265,8 +265,14 @@ def joint_losses(model, real, noise):
 
 
 
+def set_requires_grad(network, enabled):
+    """Control which network parameters accumulate gradients."""
+    for parameter in network.parameters():
+        parameter.requires_grad_(enabled)
+
+
 def joint_train_step(model, real, optimizers):
-    """One simplified TimeGAN joint training step."""
+    """One simplified TimeGAN joint training step with isolated updates."""
     mse = nn.MSELoss()
     bce = nn.BCEWithLogitsLoss()
 
@@ -279,20 +285,23 @@ def joint_train_step(model, real, optimizers):
             device=real.device
         )
 
-    # 1. Update Generator and Supervisor
-    for p in model.discriminator.parameters():
-        p.requires_grad_(False)
+    # 1. Update Generator and Supervisor only.
+    set_requires_grad(model.discriminator, False)
+    set_requires_grad(model.embedder, False)
+    set_requires_grad(model.recovery, False)
+    set_requires_grad(model.generator, True)
+    set_requires_grad(model.supervisor, True)
 
     z = sample_noise()
     e_fake = model.generator(z)
     h_fake = model.supervisor(e_fake)
+    # Frozen Recovery still propagates gradients to Generator/Supervisor.
     x_fake = model.recovery(h_fake)
 
     with torch.no_grad():
         h_real = model.embedder(real)
 
     h_pred = model.supervisor(h_real)
-
     adv = bce(
         model.discriminator(h_fake),
         torch.ones(batch_size, seq_len, 1, device=real.device)
@@ -301,34 +310,39 @@ def joint_train_step(model, real, optimizers):
         model.discriminator(e_fake),
         torch.ones(batch_size, seq_len, 1, device=real.device)
     )
-
     sup = mse(h_pred[:, :-1], h_real[:, 1:])
     moments = moment_loss(real, x_fake)
-
     loss_g = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moments
 
-    opt_g.zero_grad()
+    opt_g.zero_grad(set_to_none=True)
     loss_g.backward()
     opt_g.step()
+    # Remove stale gradients before switching training stages.
+    opt_g.zero_grad(set_to_none=True)
 
-    for p in model.discriminator.parameters():
-        p.requires_grad_(True)
+    # 2. Update Embedder and Recovery only.
+    set_requires_grad(model.generator, False)
+    set_requires_grad(model.supervisor, False)
+    set_requires_grad(model.embedder, True)
+    set_requires_grad(model.recovery, True)
 
-    # 2. Update Embedder and Recovery
     h_real = model.embedder(real)
     x_recon = model.recovery(h_real)
     h_pred = model.supervisor(h_real)
-
     recon = mse(real, x_recon)
     sup_er = mse(h_pred[:, :-1], h_real[:, 1:])
-
     loss_er = 10 * torch.sqrt(recon + 1e-8) + 0.1 * sup_er
 
-    opt_er.zero_grad()
+    opt_er.zero_grad(set_to_none=True)
     loss_er.backward()
     opt_er.step()
+    opt_er.zero_grad(set_to_none=True)
 
-    # 3. Update Discriminator
+    # 3. Update Discriminator only.
+    set_requires_grad(model.embedder, False)
+    set_requires_grad(model.recovery, False)
+    set_requires_grad(model.discriminator, True)
+
     with torch.no_grad():
         h_real = model.embedder(real)
         e_fake = model.generator(sample_noise())
@@ -337,16 +351,26 @@ def joint_train_step(model, real, optimizers):
     real_logits = model.discriminator(h_real)
     fake_logits = model.discriminator(h_fake)
     fake_e_logits = model.discriminator(e_fake)
-
     loss_d = (
         bce(real_logits, torch.ones_like(real_logits))
         + bce(fake_logits, torch.zeros_like(fake_logits))
         + bce(fake_e_logits, torch.zeros_like(fake_e_logits))
     )
 
-    opt_d.zero_grad()
+    opt_d.zero_grad(set_to_none=True)
     loss_d.backward()
     opt_d.step()
+    opt_d.zero_grad(set_to_none=True)
+
+    # Restore all components for the next batch / other model operations.
+    for network in (
+        model.generator,
+        model.supervisor,
+        model.embedder,
+        model.recovery,
+        model.discriminator,
+    ):
+        set_requires_grad(network, True)
 
     return {
         "generator": loss_g.item(),
