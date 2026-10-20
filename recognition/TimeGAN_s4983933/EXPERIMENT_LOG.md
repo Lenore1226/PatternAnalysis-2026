@@ -105,3 +105,42 @@ These experiments demonstrate the distinction between reconstruction quality, ma
 
 ### Project decision
 With the submission deadline on 2026-10-30, stop expanding the model architecture. Preserve V3.3 as the stable baseline and document V4.3 and V5.3 as experimental investigations. Prioritize final evaluation, reproducibility, documentation, and submission.
+
+## 2026-10-20 — V5.4 Diversity-aware TimeGAN Experiments
+
+### Objective
+Investigate mode collapse in the TimeGAN Generator, Supervisor, and constrained LOB decoder.
+
+### Diagnosis
+- Generator hidden pairwise difference: 0.027942.
+- Supervisor hidden pairwise difference: 0.001535.
+- Bypassing Supervisor increased generated LOB pairwise difference by approximately 17.19x.
+- However, diversity remained far below real market data.
+
+### V5.4a: Output-space diversity loss
+- Diversity weight: 0.5.
+- Training: 1 epoch.
+- Normalized generated LOB pairwise difference decreased from 3.81e-6 to 2.90e-6.
+- Gradient audit found diversity gradient norms much smaller than original generator loss gradients.
+
+### V5.4b: Hidden-space diversity loss
+- Diversity weight: 0.5.
+- Training: 1 epoch.
+- Normalized generated LOB pairwise difference increased to 6.16e-6.
+- Supervisor hidden pairwise difference improved by approximately 35.4% against the V4.3 baseline in a fixed-noise comparison.
+
+### V5.4c: Stronger hidden-space diversity
+- Diversity weight: 2.0.
+- Training: 3 epochs from the V4.3 checkpoint.
+- Initial normalized generated LOB pairwise difference: 3.81e-6.
+- Epoch 1: 4.27e-5.
+- Epoch 2: 4.54e-5.
+- Epoch 3: 3.99e-5.
+- Final generated spread standard deviation: approximately 1.47e-4.
+- Saved checkpoint corresponds to Epoch 3, not the best-diversity Epoch 2.
+
+### Conclusion
+Hidden-space diversity regularization improved generated LOB differences, but the absolute variation remained much smaller than the real market. The experiment did not solve mode collapse or establish realistic spread dynamics.
+
+### Next Experiment
+Evaluate spread-aware distribution matching as a potential improvement. The V5.5 experiment remains unverified at the time of this entry.
