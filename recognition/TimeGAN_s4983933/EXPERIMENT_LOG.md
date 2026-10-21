@@ -144,3 +144,30 @@ Hidden-space diversity regularization improved generated LOB differences, but th
 
 ### Next Experiment
 Evaluate spread-aware distribution matching as a potential improvement. The V5.5 experiment remains unverified at the time of this entry.
+
+## 2026-10-21 — V5.7 and V5.8 Decoder Ablations
+
+### V5.7: Unconstrained MLP Decoder
+- Trained an MLP decoder on frozen V4.3 Embedder representations.
+- Selected epoch: 4.
+- Test normalized LOB MSE: 0.010063.
+- Test pairwise difference: 0.000997.
+- Test temporal change: 0.001034.
+- Market structure audit: 0% of reconstructed snapshots satisfied all constraints simultaneously.
+- Conclusion: Nonlinear decoding improved variation, but did not guarantee valid market structure.
+
+### V5.8: MLP Constraint-aware Decoder
+- Combined a two-hidden-layer MLP with constrained spread and price-gap construction.
+- Initialised output biases using training-set statistics.
+- Selected epoch: 2.
+- Test normalized LOB MSE: 0.010110.
+- Test pairwise difference: 0.000583.
+- Test temporal change: 0.000536.
+- All tested structural constraints passed.
+- Conclusion: Improved dynamic reconstruction over V5.6 while retaining structural validity, but remained substantially less variable than real LOB data.
+
+### Remaining limitation
+Both decoders retained substantially less temporal and cross-sample variability than real order-book sequences. Reconstruction MSE remained close to a training-mean baseline.
+
+### Next experiment
+V5.9 will investigate feature-wise variance-aware reconstruction losses while preserving the constrained decoder architecture.
