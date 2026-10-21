@@ -206,3 +206,38 @@ not unconditional TimeGAN generation.
 ### Next steps
 Evaluate feature-group realism and test the learned decoder
 on the Generator-Supervisor output distribution.
+
+## V5.10 — Latent Distribution Matching
+
+### Objective
+Improve generated hidden-state diversity and distribution matching.
+
+### Method
+- Continued from the V5.4 diversity-aware training approach.
+- Added a channel-wise latent mean and standard deviation matching loss.
+- Used latent matching weight 5.0, diversity weight 2.0,
+  three epochs, and two generator updates.
+- Evaluated the trained generator using the V5.9
+  variance-aware, constraint-aware LOB decoder.
+
+### Generation comparison
+V5.4c + V5.9:
+- LOB pairwise difference: 0.003361
+- LOB temporal change: 0.001965
+- Spread standard deviation: 0.004080
+
+V5.10 + V5.9:
+- LOB pairwise difference: 0.003603
+- LOB temporal change: 0.002134
+- Spread standard deviation: 0.004442
+- All tested market structure constraints passed.
+
+### Limitations
+- The generated order books still show substantial diversity collapse.
+- Results are based on a single fixed random-seed comparison.
+- The current improved generation path produces relative
+  LOB features, not a complete absolute-price LOB sequence.
+
+### Next objective
+Implement a complete generated mid-price path and use it
+to reconstruct absolute 10-level ask/bid prices.
