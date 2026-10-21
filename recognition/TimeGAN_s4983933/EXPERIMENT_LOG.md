@@ -171,3 +171,38 @@ Both decoders retained substantially less temporal and cross-sample variability 
 
 ### Next experiment
 V5.9 will investigate feature-wise variance-aware reconstruction losses while preserving the constrained decoder architecture.
+
+## V5.9 — Variance-aware Constrained LOB Reconstruction
+
+### Experiment
+- Compared continued training with and without a feature-wise variance loss.
+- Both arms started from the same V5.8 checkpoint.
+- Used three epochs and the same training data, learning rate and batch ordering.
+- The V4.3 Embedder remained frozen.
+
+### Test results
+- Control MSE: 0.010110
+- Variance-aware MSE: 0.011186
+- Control pairwise difference: 0.000583
+- Variance-aware pairwise difference: 0.011541
+- Real pairwise difference: 0.050133
+- Control temporal change: 0.000536
+- Variance-aware temporal change: 0.010178
+- Real temporal change: 0.008069
+- All tested LOB structure constraints passed.
+
+### Feature-group findings
+- Generated reconstruction spread mean: 0.150189
+- Generated reconstruction spread std: 0.027284
+- Price-offset pairwise difference: 0.013521
+- Transformed-size pairwise difference: 0.108488
+
+### Interpretation
+Variance-aware reconstruction substantially improved variability
+but increased pointwise reconstruction error.
+These results concern reconstruction from real embedded data,
+not unconditional TimeGAN generation.
+
+### Next steps
+Evaluate feature-group realism and test the learned decoder
+on the Generator-Supervisor output distribution.
