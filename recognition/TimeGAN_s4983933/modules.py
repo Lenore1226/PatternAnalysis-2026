@@ -423,3 +423,66 @@ def mixture_nll(
         log_mixture + log_density,
         dim=-1,
     )
+
+
+# V5.14: Multi-factor initial volume generator
+import torch.nn.functional as F
+
+class MultiFactorVolumeHead(nn.Module):
+    def __init__(self, hidden_dim, mean_log, std_log):
+        super().__init__()
+
+        # Separate distribution parameters per level.
+        init_mu = mean_log + torch.log(
+            -torch.expm1(-mean_log.clamp_min(0.1))
+        )
+        self.mu = nn.Parameter(init_mu.clone())
+        self.log_sigma = nn.Parameter(
+            std_log.clamp_min(0.1).log()
+        )
+
+        # Independent AR coefficients for 20 levels.
+        self.rho_logits = nn.Parameter(
+            torch.full((20,), 2.2)
+        )
+
+        # Limited shared TimeGAN conditioning.
+        self.condition = nn.Linear(
+            hidden_dim, 20, bias=False
+        )
+        nn.init.zeros_(self.condition.weight)
+
+    def forward(self, hidden, innovations):
+        rho = torch.sigmoid(
+            self.rho_logits
+        ).clamp(0.05, 0.98)
+
+        noise = []
+        previous = innovations[:, 0]
+        noise.append(previous)
+
+        for t in range(1, innovations.shape[1]):
+            previous = (
+                rho * previous
+                + torch.sqrt(
+                    1.0 - rho.square()
+                ) * innovations[:, t]
+            )
+            noise.append(previous)
+
+        factors = torch.stack(noise, dim=1)
+
+        shared = (
+            0.15 * torch.tanh(
+                self.condition(hidden)
+            )
+        )
+
+        raw = (
+            self.mu
+            + torch.exp(self.log_sigma) * factors
+            + shared
+        )
+
+        # Positive log1p volumes.
+        return F.softplus(raw)
