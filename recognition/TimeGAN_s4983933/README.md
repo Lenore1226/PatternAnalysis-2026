@@ -355,6 +355,15 @@ They should not be interpreted as isolated neural-network inference latency. The
 
 ## 9. Reproducibility and Code Organisation
 
+### 9.0 Final Implementation and Historical Experiments
+
+The authoritative implementation is provided by `modules.py`, `dataset.py`, `train.py`, `train_multifactor.py`, and `predict.py`.
+
+The additional versioned Python scripts document intermediate experiments, model ablations, diagnostic investigations, and alternative configurations developed throughout the project. They are retained as research history rather than independent final submission entry points.
+
+For the final integrated generator, use `predict.py`. For staged training, use `train.py` and the documented checkpoint dependencies. Historical experimental results should not be confused with the final V5.38 benchmark.
+
+
 ### 9.1 Source Files
 
 The formal implementation includes:
