@@ -305,7 +305,7 @@ def main():
     )
     parser.add_argument(
         "--depth-checkpoint",
-        default="outputs_v5_29_mdn/best_mdn.pt",
+        default="outputs_v5_29_mdn/best_mdn_safe.pt",
     )
 
     args = parser.parse_args()

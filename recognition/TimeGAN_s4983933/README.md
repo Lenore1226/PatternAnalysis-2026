@@ -1,751 +1,526 @@
-# TimeGAN for Synthetic Limit Order Book Generation
+# Time-Series Generation: TimeGAN for Limit Order Book Simulation
 
-**Course:** COMP3710 / COMP7710 — Pattern Recognition  
-**Project:** Project 7 — Time-Series Generation (Hard Difficulty)  
-**Student:** Meiling Si (s4983933)  
-**Dataset:** LOBSTER AMZN Level 10, 21 June 2012  
-**Framework:** PyTorch  
-**Status:** Research prototype
+**COMP3710 — Pattern Recognition and Analysis (2026)**
+**Student ID:** s4983933
+**Project 7 — Hard Difficulty**
 
-## 1. Introduction
+## 1. Project Overview
 
-Financial limit order books (LOBs) record the prices and quantities of outstanding buy and sell orders at different price levels. They provide information about market liquidity, trading activity, and short-term price dynamics.
+This project investigates the generation of synthetic financial limit order book (LOB) time series using TimeGAN and a hybrid probabilistic modelling framework.
 
-Realistic synthetic LOB data can support the development and testing of algorithmic trading strategies without relying entirely on expensive historical market datasets. However, generating realistic order books is more challenging than producing ordinary time-series data.
+The objective is to produce synthetic sequences that preserve both the structural validity of financial order books and the statistical characteristics of real market activity.
 
-A valid order book must satisfy fundamental market microstructure constraints, including positive bid–ask spreads, correctly ordered price levels, and nonnegative order quantities. Synthetic sequences should also reproduce realistic distributions and temporal variability.
+The final implementation combines:
 
+- A recurrent TimeGAN backbone for learning temporal latent representations.
+- A constraint-aware price decoder for constructing ordered bid and ask levels.
+- A multi-factor volume head for initial liquidity generation.
+- A probabilistic mixture-density model for temporal depth dynamics.
+- Markov models for discrete price returns and bid-ask spread transitions.
 
-This project investigates whether TimeGAN can generate realistic LOB sequences using historical LOBSTER data [2].
+The project evaluates whether these components improve upon a conventional TimeGAN and an empirical training-data replay baseline.
 
-The main engineering question is:
+## 2. Dataset and Preprocessing
 
-**Can TimeGAN learn realistic temporal patterns while maintaining valid market microstructure, and does its additional complexity offer meaningful advantages over simple baseline generators?**
+The project uses the supplied LOBSTER AMZN Level-10 limit order book dataset.
 
-The experiments suggest that TimeGAN can generate order books satisfying many basic structural constraints, but the final model suffers from insufficient sample diversity and poor distributional matching.
+Each observation contains 41 features:
 
-Consequently, the current implementation is considered a research prototype rather than a reliable simulator for trading strategy backtesting.
+- Ten ask-price levels.
+- Ten ask-volume levels.
+- Ten bid-price levels.
+- Ten bid-volume levels.
+- One log-return feature.
 
-## 2. Feasibility Review
+The input sequence length is 24 observations.
 
-### 2.1 User Need and Project Scope
+The dataset is divided into chronological training, validation and test subsets:
 
-The intended users are quantitative researchers and financial engineers developing market simulation and risk-analysis systems.
+| Split | Sequences | Shape |
+|---|---:|---|
+| Training | 7,867 | (7867, 24, 41) |
+| Validation | 1,685 | (1685, 24, 41) |
+| Test | 1,685 | (1685, 24, 41) |
 
-The prototype aims to generate synthetic sequences of ten-level limit order books based on LOBSTER data.
+The model is trained on the training partition, while validation data supports model development and selection. The test partition is reserved for final evaluation.
 
-The principal engineering challenge is balancing distributional fidelity, temporal realism, market validity, and computational cost.
+The implementation uses a consistent normalization and inverse-transformation pipeline, with price, volume and return characteristics evaluated in their appropriate representations.
 
-The initial acceptance criteria are:
+## 3. Model Architecture
 
-1. Generate complete ten-level order books with positive bid–ask spreads, correctly ordered price ladders, and nonnegative quantities.
-2. Evaluate spread and mid-price return distributions using KL divergence, with a target of KL ≤ 0.1.
-3. Evaluate structural similarity between real and synthetic order-book depth heatmaps, targeting SSIM > 0.6.
-4. Compare the proposed model against baseline methods and investigate 3–5 representative failure cases.
-5. Report computational requirements, including training time, memory consumption, and generation performance.
+### 3.1 TimeGAN Backbone
 
-### 2.2 Model Choice and Course Concepts
-
-The selected model is TimeGAN, a generative adversarial network designed for sequential data.
-
-TimeGAN combines adversarial training with supervised temporal learning to encourage generated sequences to reproduce realistic time-dependent patterns.
+The TimeGAN backbone uses recurrent neural networks to learn temporal representations.
 
 The architecture contains five components:
 
-- Embedder
-- Recovery network
-- Generator
-- Supervisor
-- Discriminator
+1. Embedder
+2. Recovery network
+3. Generator
+4. Supervisor
+5. Discriminator
 
-The project draws upon recurrent neural networks, generative adversarial learning, latent representation learning, supervised temporal prediction, and statistical distribution comparison.
+The embedder and recovery network support representation learning, while the generator and supervisor participate in synthetic sequence generation.
 
-The chosen dataset is the LOBSTER AMZN Level 10 sample, containing ten buy-side and ten sell-side price and quantity levels.
+### 3.2 Constraint-Aware Price Generation
 
-This is classified as a Hard Difficulty project.
+A dedicated price head constructs ordered bid and ask levels, enforcing positive spreads and monotonic price ladders.
 
-### 2.3 Preliminary Feasibility Evidence
+The final system uses a dynamically evolving midpoint, rather than requiring bid and ask prices to remain on fixed sides of a zero-valued reference.
 
-The initial data audit identified 269,748 aligned order-book records with 40 features per record.
+### 3.3 Liquidity and Depth Generation
 
-A chronological split was adopted to prevent future information from leaking into model training.
+A multi-factor volume head produces initial liquidity profiles.
 
-Each sample was divided into sequences of 24 time steps.
+A probabilistic mixture-density network then models evolving order-book depth, allowing stochastic volume dynamics across time.
 
-An initial simplified TimeGAN smoke test was successfully executed on an NVIDIA A100 GPU using a smaller three-feature representation.
+### 3.4 Markov Return and Spread Models
 
-The test confirmed that the model components could execute and generate finite outputs, although it did not demonstrate convergence or realistic order-book generation.
+Discrete Markov models are used to generate realistic return activity and bid-ask spread transitions.
 
-The preliminary GPU smoke test required approximately 3.96 seconds and recorded 27.15 MB of allocated GPU memory.
+These components address statistical limitations observed in earlier direct TimeGAN outputs.
 
-These measurements refer only to the preliminary simplified experiment, not the final 40-feature model.
+### 3.5 Final Hybrid Generation
 
-### 2.4 Risks, Computational Budget, and Fallback
+The final V5.38 pipeline combines neural representations, constrained price reconstruction, probabilistic depth generation, and Markov dynamics.
 
-The main anticipated risks included:
+The resulting output has shape:
 
-- Adversarial training instability and mode collapse.
-- Violations of financial market microstructure constraints.
-- Distribution differences between earlier and later trading periods.
-- Computational expense.
-- Limited generalisation from a single trading-day sample.
+`(number_of_sequences, sequence_length, 41)`
 
-The initial plan was to begin with a small working model, verify the data processing and loss functions, and then expand to complete ten-level order-book generation.
+## 4. Experimental Design
 
-If stable generative training could not be achieved, simple baseline methods would be retained to demonstrate the limitations of the proposed model and establish a meaningful comparison.
+The experimental evaluation compares:
 
-## 3. Dataset and Preprocessing
+- Empirical training-window replay.
+- Early V4.3 TimeGAN.
+- V5.10 constrained TimeGAN.
+- V5.11 hybrid return model.
+- Final V5.38 integrated model.
 
-### 3.1 Dataset Description
+The evaluation considers:
 
-The project uses the LOBSTER AMZN Level 10 sample from 21 June 2012.
+- Bid-ask spread distribution.
+- Log-return distribution.
+- Market structure validity.
+- Liquidity depth distributions.
+- Temporal autocorrelation.
+- Depth heatmap structural similarity.
+- Long-horizon generation stability.
+- Computational cost.
 
-Each order-book snapshot contains 40 numerical features.
+Detailed quantitative results, comparisons, limitations, and reproducibility instructions are provided in the following sections.
 
-For each of ten depth levels, the data contains:
 
-| Feature | Description |
-|---|---|
-| Ask Price | Selling price at the corresponding level |
-| Ask Size | Available sell-side quantity |
-| Bid Price | Buying price at the corresponding level |
-| Bid Size | Available buy-side quantity |
+## 5. Quantitative Evaluation and Baseline Comparison
 
-The original dataset contains 269,748 order-book records.
+### 5.1 Unified Evaluation Protocol
 
-### 3.2 Chronological Data Splitting
+The final comparison uses the first 512 sequences of the chronologically held-out test partition. Each sequence contains 24 observations and 41 features.
 
-To prevent look-ahead bias, the dataset was divided chronologically rather than randomly.
+All reported models are assessed using a consistent evaluation script (`benchmark_v5_47.py`), including KL divergence for spread and returns, depth heatmap SSIM, and structural validity checks.
 
-| Split | Number of sequences |
-|---|---:|
-| Training | 7,867 |
-| Validation | 1,685 |
-| Testing | 1,685 |
+The KL divergence is calculated as KL(real || generated) using 80-bin histograms with shared numerical ranges. Because KL estimates depend on histogram discretisation and the representation of near-zero returns, these values should be interpreted under the stated evaluation protocol rather than as estimator-independent measurements.
 
-Each sequence contains 24 time steps and 40 features.
+### 5.2 Baseline Comparison
 
-The sequence stride was set to 24, producing non-overlapping windows.
-
-### 3.3 Relative Mid-Price Representation
-
-The initial implementation used absolute price values.
-
-However, analysis identified substantial differences in absolute price levels between the training and testing periods.
-
-To reduce this representation problem, V2 preprocessing converts prices into offsets from the contemporaneous mid-price.
-
-The mid-price is defined as:
-
-\[
-M_t = \frac{P^{ask}_{1,t}+P^{bid}_{1,t}}{2}
-\]
-
-Each price feature is transformed as:
-
-\[
-P'_{i,t}=P_{i,t}-M_t
-\]
-
-This representation preserves within-snapshot price differences, including bid–ask spreads and price-level ordering.
-
-However, it removes the absolute mid-price trajectory.
-
-As a result, the final V2 model cannot independently generate mid-price returns.
-
-### 3.4 Volume Transformation and Normalisation
-
-Order quantities are transformed using:
-
-\[
-V'=\log(1+V)
-\]
-
-This reduces the influence of unusually large volume values.
-
-Min–max normalisation is subsequently applied using parameters fitted exclusively on the training partition.
-
-The same normalisation parameters are applied to the validation and testing partitions to avoid data leakage.
-
-Generated values can be inverse-transformed to recover relative price offsets and order quantities.
-
-## 4. TimeGAN Architecture
-
-The implementation follows the TimeGAN framework proposed by Yoon et al. [1] and uses five GRU-based neural networks.
-
-
-### 4.1 Embedder
-
-The Embedder transforms real order-book sequences into a lower-dimensional latent representation.
-
-### 4.2 Recovery Network
-
-The Recovery network reconstructs the original feature representation from the latent embedding.
-
-Together, these components learn a representation of the real data.
-
-### 4.3 Generator
-
-The Generator maps random noise sequences to synthetic latent representations.
-
-### 4.4 Supervisor
-
-The Supervisor learns temporal relationships between successive latent representations.
-
-This component encourages generated sequences to reproduce sequential dependencies.
-
-### 4.5 Discriminator
-
-The Discriminator attempts to distinguish real latent representations from synthetic representations.
-
-Adversarial optimisation trains the Generator to produce representations that are difficult to distinguish from real data.
-
-## 5. Training Procedure
-
-TimeGAN is trained in three stages.
-
-### Stage 1: Embedding Pretraining
-
-The Embedder and Recovery network are optimised using reconstruction loss.
-
-### Stage 2: Supervisor Pretraining
-
-The Supervisor is trained to predict successive latent representations using supervised temporal loss.
-
-### Stage 3: Joint Adversarial Training
-
-The complete architecture is optimised using adversarial, supervised, reconstruction, and moment-matching objectives.
-
-Separate parameter updates are performed for the Generator/Supervisor, Embedder/Recovery, and Discriminator.
-
-### 5.1 Final Experiment Configuration
-
-| Parameter | Value |
-|---|---|
-| Dataset representation | V2 relative mid-price |
-| Model architecture | TimeGAN V3.2 |
-| Generator output activation | Identity |
-| Hidden dimension | 24 |
-| Noise dimension | 40 |
-| GRU layers | 2 |
-| Batch size | 64 |
-| Embedding epochs | 2 |
-| Supervisor epochs | 2 |
-| Joint training epochs | 10 |
-| Generator updates per batch | 2 |
-| Joint learning rate | 0.0001 |
-| Training device | CPU |
-| Total runtime | 460.38 seconds |
-
-### 5.2 Model Development Experiments
-
-| Version | Main modification | Observation |
-|---|---|---|
-| V1 | Absolute-price representation | Strong temporal distribution shift |
-| V2 | Relative mid-price representation | Reduced representation shift; mode collapse remained |
-| V3 | Gradient isolation during joint training | No meaningful diversity improvement |
-| V3.1 | Two generator updates per batch | Mode collapse persisted |
-| V3.2 | Identity activation in Generator | Initial diversity followed by rapid collapse |
-| V3.3 | Reduced joint learning rate | More stable early training |
-| V3.3 (10 epochs) | Extended joint training | Increased sample variation but adversarial imbalance persisted |
-
-### 5.3 Training Stability
-
-During the final ten-epoch experiment, noise sensitivity increased from approximately 0.0000121 to 0.0002396.
-
-Sample standard deviation increased from 0.00001102 to 0.00023998.
-
-However, the Discriminator loss decreased from 2.0030 to 0.2136, while the Generator adversarial loss increased from 1.5016 to 6.8696.
-
-These results suggest that the Generator became more responsive to random noise, but the Discriminator increasingly distinguished real from synthetic representations.
-
-This indicates possible adversarial training imbalance.
-
-The absolute diversity of generated samples nevertheless remained very low.
-
-
-![TimeGAN V3.3 Training Losses](outputs_training_plots/training_losses.png)
-
-*Figure 6. Generator, discriminator, embedder/recovery, and adversarial losses over ten epochs of joint training.*
-
-![TimeGAN V3.3 Sample Diversity](outputs_training_plots/training_diversity.png)
-
-*Figure 7. Changes in generated sample standard deviation and noise sensitivity during joint training. Although both metrics increased, the final generated samples remained insufficiently diverse.*
-
-
-## 6. Baseline Methods
-
-Two baseline methods were implemented.
-
-### 6.1 Training Resample Baseline
-
-Complete sequences are sampled randomly from the training dataset with replacement.
-
-This method preserves authentic order-book structures because it reuses real sequences.
-
-However, it does not generate genuinely novel market behaviour and should be interpreted as a distributional reference.
-
-### 6.2 Repeated Training Mean Baseline
-
-The mean training sequence is computed independently for each feature and time step.
-
-The resulting template is then repeated to produce the required number of samples.
-
-This baseline intentionally lacks sample diversity.
-
-It is useful for identifying whether TimeGAN produces outputs that are only marginally more informative than a repeated average sequence.
-
-## 7. Experimental Results
-
-### 7.1 Distributional Comparison
-
-All three methods were evaluated against the same held-out testing partition.
-
-| Metric | TimeGAN V3.3 | Training Resample | Repeated Mean |
-|---|---:|---:|---:|
-| Mean MAE ↓ | 0.032308 | 0.030987 | 0.031123 |
-| Std MAE ↓ | 0.065232 | 0.018556 | 0.073730 |
-| Mean feature KL ↓ | 24.395889 | 0.356945 | 25.452350 |
-| Market constraints ↑ | 97.292285% | 100% | 100% |
-| Real–candidate SSIM | 0.399679 | 0.241607 | 0.397960 |
-| Candidate–candidate SSIM | 0.999990 | 0.231964 | 1.000000 |
-
-TimeGAN achieved marginally lower feature-wise KL divergence than the Repeated Mean baseline.
-
-However, it performed substantially worse than the Training Resample reference.
-
-The extremely high candidate-versus-candidate SSIM indicates that TimeGAN generated nearly identical depth structures across independent samples.
-
-The reported feature-wise KL uses 50-bin histograms with numerical smoothing. The absolute magnitude depends on the estimation method.
-
-### 7.2 Spread KL Divergence
-
-The course specification requires KL divergence to be evaluated on bid–ask spreads and mid-price returns.
-
-For each snapshot, the best bid–ask spread is:
-
-\[
-S_t=P^{ask}_{1,t}-P^{bid}_{1,t}
-\]
-
-The following results were obtained using 50-bin histogram KL estimation.
-
-| Method | Spread KL |
-|---|---:|
-| TimeGAN V3.3 | 24.375349 |
-| Training Resample | 0.347169 |
-| Repeated Mean | 24.580134 |
-
-The required target is KL ≤ 0.1.
-
-TimeGAN did not achieve this target.
-
-Its Spread KL was only slightly lower than the Repeated Mean baseline, indicating poor coverage of the real spread distribution.
-
-The Training Resample reference also failed to reach the target, suggesting differences between training-period and testing-period spread distributions.
-
-**Important limitation:** Mid-price Returns KL has not been measured for the generated sequences. The relative mid-price representation removes the price trajectory needed to generate independent mid-price returns.
-
-Therefore, the project does not claim to have met the required return-distribution target.
-
-### 7.3 Market Microstructure Validation
-
-Generated sequences were inverse-transformed and checked against basic order-book constraints.
-
-| Constraint | Real LOBSTER | TimeGAN |
-|---|---:|---:|
-| Positive best spread | 100.00% | 100.00% |
-| Correct ask price ordering | 100.00% | 97.29% |
-| Correct bid price ordering | 100.00% | 99.85% |
-| Nonnegative quantities | 100.00% | 100.00% |
-| All constraints satisfied | 100.00% | 97.29% |
-
-The majority of generated snapshots satisfied the four implemented structural constraints.
-
-However, approximately 2.71% of generated time steps contained an ask-price ordering violation.
-
-These checks establish only basic market validity. Tick-size compliance, integer order quantities, and additional financial constraints were not evaluated.
-
-### 7.4 Bid–Ask Spread Statistics
-
-| Statistic | Real LOBSTER | TimeGAN |
-|---|---:|---:|
-| Mean spread | 0.097911 | 0.141463 |
-| Spread standard deviation | 0.042384 | 0.015875 |
-
-The generated mean spread was approximately 44.5% higher than the real test mean.
-
-Its spread standard deviation was approximately 62.5% lower.
-
-This indicates that generated spreads were systematically wider and less variable than those observed in the real test period.
-
-### 7.5 Structural Similarity Evaluation
-
-Depth heatmaps were constructed from 24 time steps and 20 bid/ask quantity features.
-
-Structural Similarity Index (SSIM), originally proposed by Wang et al. [4], was computed using independent randomly selected samples.
-
-
-| Comparison | Mean SSIM | Standard Deviation |
-|---|---:|---:|
-| Real vs Real | 0.251589 | 0.207440 |
-| Real vs Generated | 0.399142 | 0.216332 |
-| Generated vs Generated | 0.999992 | 0.000012 |
-
-The Generated vs Generated SSIM is extremely close to 1.
-
-This indicates that independently generated depth heatmaps are almost identical.
-
-In contrast, real order-book sequences display substantially more variation.
-
-The relatively high Real vs Generated score does not imply superior generative quality, since independent sequences do not have corresponding temporal targets.
-
-A nearly constant generated pattern can resemble multiple real samples while failing to capture their diversity.
-
-Therefore, the required SSIM > 0.6 structural-fidelity target has not been demonstrated by the current evaluation.
-
-## 8. Failure Case Analysis
-
-Five representative generated order-book sequences were selected for qualitative and quantitative error analysis.
-
-Real and generated sequences with the same array index are independent samples rather than aligned forecasts.
-
-### 8.1 Case Overview
-
-| Failure Case | Index | Ask Violations | Real Mean Spread | Generated Mean Spread |
+| Method | Spread KL ↓ | Return KL ↓ | Depth SSIM ↑ | Market Validity ↑ |
 |---|---:|---:|---:|---:|
-| Ask ladder violation | 0 | 1 | 0.17000 | 0.14174 |
-| Wide spread | 460 | 1 | 0.15875 | 0.14205 |
-| Flat depth | 589 | 0 | 0.12833 | 0.14040 |
-| Flat spread | 1337 | 0 | 0.09917 | 0.14047 |
-| Typical generated depth | 825 | 1 | 0.10958 | 0.14149 |
+| Empirical replay | 0.1287 | 0.0142 | 0.0725 | 100% |
+| V4.3 TimeGAN | 20.2882 | 2.3823 | 0.1593 | 0% |
+| V5.10 TimeGAN | 19.6924 | 2.5060 | 0.1586 | 100% |
+| V5.11 hybrid | 19.6924 | 0.0458 | 0.1586 | 100% |
+| **V5.38 final** | **0.1132** | **0.0064** | **0.0846** | **100%** |
 
-### 8.2 Case 1 — Ask Ladder Violation
+The final model substantially improves spread and return distribution matching compared with earlier TimeGAN-based approaches.
 
-**Generated sequence index: 0**
+Compared with empirical training-window replay, V5.38 achieves lower spread KL and return KL. However, its depth heatmap SSIM remains low, indicating that improvements in marginal price dynamics do not automatically imply realistic joint liquidity structure.
 
-The generated sequence contains one time step in which the ask-price ladder is incorrectly ordered.
+Empirical replay is a useful distributional reference but copies observed training sequences rather than generating genuinely new order-book dynamics.
 
-In a valid order book, ask prices should increase or remain nondecreasing across successive depth levels.
+### 5.3 Market Structure Validity
 
-The violation indicates that an unconstrained continuous generator does not guarantee the preservation of financial market microstructure invariants.
+The final system preserves the following tested structural constraints:
 
-![Case 1: Ask Price Ladder Violation](outputs_failure_cases_v3_3/ask_ladder_violation.png)
+- Positive bid-ask spreads.
+- Minimum tick-sized price separation, with numerical tolerance.
+- Strictly increasing ask-price ladders.
+- Strictly decreasing bid-price ladders.
+- Nonnegative liquidity volumes.
+- Finite numerical outputs.
 
-*Figure 1. Generated order-book sequence with an ask-price ladder violation (index 0). Real and generated sequences are independent samples rather than temporally aligned observations.*
+The final V5.38 model achieves **100% validity under the tick-aware market structure evaluation**.
 
+An earlier benchmark reported 99.63% validity because it required the best ask to be above zero and the best bid below zero. This zero-centred condition is not appropriate for the final model, which represents prices relative to a fixed reference while allowing the midpoint to evolve dynamically.
 
-### 8.3 Case 2 — Wide Spread
+The original result is retained for transparency rather than silently replaced.
 
-**Generated sequence index: 460**
+### 5.4 Target Achievement
 
-This sequence was selected because it has a relatively wide average spread within the generated sample collection.
+The project specifies target values of KL < 0.1 and depth heatmap SSIM > 0.6.
 
-Its generated mean spread is 0.14205, compared with 0.15875 in the independently selected real reference sequence.
+On the final test protocol:
 
-Therefore, this particular pair does not demonstrate spread overestimation.
+- Spread KL = **0.1132**: target not achieved.
+- Return KL = **0.00638**: target achieved.
+- Unpaired depth SSIM = **0.0846**: target not achieved.
 
-Instead, the overall spread overestimation conclusion is supported by the aggregate statistics.
+The results therefore demonstrate significant improvements, but do not support a claim that every quantitative target was met.
 
-This case illustrates the importance of distinguishing population-level distribution errors from differences between independent individual samples.
+## 6. Depth Structure and Qualitative Analysis
 
+### 6.1 Real versus Synthetic Depth Heatmaps
 
-![Case 2: Wide Spread](outputs_failure_cases_v3_3/wide_spread.png)
+Five representative real-validation and synthetic depth heatmaps were generated using 20 price levels and 24 temporal observations.
 
-*Figure 2. A generated sequence selected for its relatively wide mean bid–ask spread (index 460). The reference real sequence is not temporally aligned with the generated sample.*
+The heatmaps use log-transformed liquidity volumes and a shared real-data intensity scale.
 
+The comparison reveals that both real and synthetic sequences contain persistent horizontal depth structures, but generated liquidity can exhibit different temporal variation and cross-level organisation.
 
-### 8.4 Case 3 — Flat Depth
+These sequences are independently generated rather than paired predictions. Therefore, individual real and synthetic images should not be interpreted as pixel-aligned reconstruction targets.
 
-**Generated sequence index: 589**
+### 6.2 Quantitative Depth Diagnostics
 
-The sequence was selected for particularly low temporal variation in order-book depth quantities.
+The following diagnostics compare 512 real-validation sequences and 512 synthetic V5.38 sequences.
 
-This is consistent with the near-perfect Generated vs Generated SSIM observed during quantitative evaluation.
+| Metric | Real | V5.38 |
+|---|---:|---:|
+| Mean volume | 161.5361 | 147.4290 |
+| Mean absolute temporal change | 17.3436 | 20.4003 |
+| Coefficient of variation of level means | 0.2481 | 0.2393 |
+| Mean absolute cross-level correlation | 0.0470 | 0.0646 |
+| Mean level-wise lag-1 autocorrelation | 0.9065 | 0.8862 |
 
-The model appears to generate highly repetitive liquidity patterns rather than the diverse depth dynamics present in real order books.
+The generated order book underestimates average liquidity by approximately 8.7%, while exhibiting approximately 17.6% larger absolute temporal changes.
 
-This is a representative manifestation of mode collapse.
+Several intermediate bid-depth levels are notably underestimated. For example, the real mean volume at Bid Level 6 is approximately 217.20, compared with 162.32 for the generated data.
 
+These findings indicate that the model captures aspects of liquidity persistence but does not fully reproduce depth-specific distributions and temporal dependencies.
 
-![Case 3: Flat Depth](outputs_failure_cases_v3_3/flat_depth.png)
+### 6.3 SSIM Reliability and Interpretation
 
-*Figure 3. Generated order-book depth sequence with low temporal variability (index 589), illustrating insufficient liquidity-depth diversity.*
+A repeated random-pairing experiment was performed using the same depth image representation and normalisation as the unified benchmark.
 
+| Comparison | Mean SSIM | Standard deviation across 20 repeats |
+|---|---:|---:|
+| Real versus itself | 1.0000 | 0.0000 |
+| Real versus independent real | 0.1236 | 0.0061 |
+| Real versus V5.38 | 0.0817 | 0.0050 |
 
-### 8.5 Case 4 — Flat Spread Dynamics
+These results show that even independently sampled real order books have low image-level SSIM.
 
-**Generated sequence index: 1337**
+Consequently, randomly paired SSIM is not an equivalent measure of reconstruction accuracy or full distributional fidelity for unconditional sequence generation.
 
-The generated sequence exhibits unusually low spread variation.
+Nevertheless, V5.38 remains below the independently paired real-data reference, indicating genuine residual discrepancies in generated depth structure.
 
-Its mean spread is 0.14047, compared with 0.09917 in the independently selected reference sequence.
+The prescribed SSIM threshold of 0.6 is not achieved under the current unpaired evaluation protocol.
 
-This example is consistent with the wider population-level finding that synthetic spreads are less variable than real spreads.
+## 7. Long-Horizon Generation and Failure Analysis
 
+### 7.1 Extended 500-Step Generation
 
+Although the primary evaluation uses 24-step sequences, the final generator was also tested on 500-step sequences.
 
-![Case 4: Flat Spread Dynamics](outputs_failure_cases_v3_3/flat_spread.png)
+A batch of 32 independently generated sequences, each containing 500 observations, was produced while maintaining the tested market structure constraints.
 
-*Figure 4. Generated order-book sequence with low spread variability (index 1337), illustrating insufficient spread dynamics.*
+This experiment investigates how the hybrid generation process behaves beyond the original training-window length.
 
+### 7.2 Long-Term Liquidity Drift
 
+The mean total depth across the first 100 observations was approximately 3,394.9, compared with 4,118.8 over the final 100 observations.
 
-### 8.6 Case 5 — Typical Generated Depth
+Across 32 sequences:
 
-**Generated sequence index: 825**
+- The mean per-sequence relative change was approximately +31.4%.
+- The median relative change was approximately +24.7%.
+- 21 of 32 generated sequences had increasing total depth.
+- 17 of 32 increased by more than 20%.
+- Six sequences decreased by more than 20%.
 
-This example was selected to represent a typical generated depth pattern rather than an extreme outlier.
+This indicates a tendency toward depth drift in the generated long-horizon sample.
 
-Its generated mean spread is 0.14149.
+However, comparable long continuous real-market sequences were not evaluated under this protocol, so this experiment does not establish that the drift is systematically greater than in real trading data.
 
-It also contains one ask-price ordering violation.
+### 7.3 Representative Limitations
 
-This illustrates how synthetic snapshots can appear broadly plausible while remaining repetitive or violating price-level ordering.
+**Liquidity underestimation.** The final model underestimates overall mean depth and several intermediate bid-price levels.
 
-![Case 5: Typical Generated Depth](outputs_failure_cases_v3_3/typical_generated_depth.png)
+**Temporal dependence mismatch.** Synthetic volumes exhibit greater short-term changes and slightly weaker lag-1 persistence.
 
-*Figure 5. A representative generated depth pattern (index 825), illustrating the model's tendency to produce highly similar liquidity structures.*
+**Cross-level dependency mismatch.** The average absolute correlation across depth levels differs from the real reference.
 
+**Long-horizon stability.** Extended rollout demonstrates potential liquidity drift beyond the 24-step training window.
 
-### 8.7 Summary of Failure Modes
+**Incomplete statistical targets.** The final spread KL and depth SSIM do not satisfy the stated targets.
 
-The failure cases indicate several limitations:
+Together, these limitations show why correct price ordering and realistic one-dimensional statistics are necessary but insufficient for fully realistic financial time-series simulation.
 
-1. Occasional violations of ask-price ordering.
-2. Limited diversity in generated order-book depth.
-3. Insufficient variation in bid–ask spreads.
-4. Poor matching of real spread distributions.
-5. Persistent mode collapse despite adjustments to training configuration.
+### 7.4 Failure Case Autopsies
 
-These failures are important because structurally plausible outputs do not necessarily reproduce realistic financial market dynamics.
+#### Case 1: Spread Distribution Mismatch
 
-## 9. Computational Resource Analysis
+**Observed evidence:** The final V5.38 spread KL divergence was 0.113217, exceeding the acceptance target of 0.1, despite the tested order books satisfying tick-aware market structure constraints.
 
-### 9.1 Model Complexity and Training Cost
+**Diagnosis:** Enforcing positive, tick-aligned spreads does not guarantee an accurate spread probability distribution. The statistical spread generator retains a measurable discrepancy from the held-out market data.
 
-The final TimeGAN model contains **37,529 parameters** across its five GRU-based neural network components.
+**Impact:** Simulations may misrepresent transaction costs and liquidity conditions, even when generated price ladders are structurally valid.
 
-The final experiment was conducted on CPU using two embedding pretraining epochs, two supervisor pretraining epochs, and ten joint adversarial training epochs.
+**Possible improvement:** Refine spread transition modelling and calibrate conditional spread distributions using training and validation data only.
 
-| Measurement | Result |
+#### Case 2: Depth Heatmap Similarity
+
+**Observed evidence:** Unpaired real-versus-synthetic depth SSIM was 0.084644, below the proposed 0.6 target. In the separate reliability experiment, random real-versus-real pairs also showed low SSIM (mean 0.123555).
+
+**Diagnosis:** The generated liquidity patterns differ from real samples, but SSIM between independent windows also penalises legitimate sample-to-sample variability. This makes the original threshold difficult to interpret as a standalone realism measure.
+
+**Impact:** The depth generator cannot be considered to have met the SSIM target, while the low score alone does not quantify all aspects of statistical realism.
+
+**Possible improvement:** Combine unpaired SSIM with level-wise distribution metrics, temporal autocorrelation and cross-level correlation comparisons. Reconsider the acceptance threshold using real-versus-real reference distributions.
+
+#### Case 3: Liquidity Level and Temporal Dynamics
+
+**Observed evidence:** Real mean volume was 161.54 versus 147.43 for the synthetic model. Mean absolute temporal volume change was 17.34 for real data and 20.40 for synthetic data. The mean level-wise lag-1 autocorrelation was 0.9065 for real data and 0.8862 for synthetic data.
+
+**Diagnosis:** The volume component captures some persistence but does not jointly match mean liquidity, temporal variation and autocorrelation. Multi-objective training may involve trade-offs among these targets.
+
+**Impact:** A downstream market simulator could encounter inaccurate depth availability or overly reactive liquidity changes.
+
+**Possible improvement:** Investigate level-specific volume calibration, conditional temporal modelling and more balanced validation objectives.
+
+#### Case 4: Long-Horizon Liquidity Drift
+
+**Observed evidence:** In 32 generated sequences of 500 time steps, mean total depth increased from approximately 3,394.9 in the first 100 steps to 4,118.8 in the last 100 steps. Seventeen sequences increased by more than 20%.
+
+**Diagnosis:** Repeated sequence generation may accumulate distributional deviations outside the 24-step training horizon. This remains a hypothesis because matched 500-step real-market controls were not evaluated.
+
+**Impact:** Long-running simulations could develop unrealistic liquidity regimes even when individual order-book snapshots remain structurally valid.
+
+**Possible improvement:** Evaluate matched real-market long sequences, perform horizon-dependent distribution checks and investigate explicit long-horizon conditioning or stabilisation.
+
+### 7.5 Engineering Recommendation
+
+**Recommendation: Continue research development; do not deploy for live trading or high-stakes financial decision-making.**
+
+The V5.38 hybrid TimeGAN generator demonstrates technical feasibility for synthetic limit order book generation. It produces structurally consistent ten-level order books under the tested tick-aware validation rules and achieves a held-out mid-price return KL divergence of 0.006378, below the target of 0.1.
+
+However, two important acceptance criteria remain unmet: spread KL divergence is 0.113217 (target <= 0.1), and unpaired depth SSIM is 0.084644 (proposed target > 0.6). Liquidity statistics also reveal mismatches in depth levels and temporal variation. Extended 500-step generation shows potential long-horizon liquidity drift, although a matched real-market long-sequence comparison has not yet been performed.
+
+**Recommended next steps:**
+
+1. Calibrate conditional spread generation to improve spread distribution matching.
+2. Improve depth modelling using level-specific statistics, temporal dependence and cross-level correlations.
+3. Reassess unpaired SSIM against real-versus-real reference distributions, rather than treating 0.6 as an independently validated threshold.
+4. Evaluate long-horizon synthetic and real sequences under identical protocols.
+5. Expand evaluation beyond the single-day AMZN sample before considering deployment.
+
+**Deployment decision:** The current prototype is suitable for exploratory research, controlled comparisons and further model development. It is not yet validated as a reliable substitute for real market data in trading strategy evaluation, risk management or production execution systems.
+
+## 8. Computational Cost and Environment
+
+### 8.1 Software Environment
+
+The final CPU evaluation was carried out on a Rangpur Linux environment using:
+
+- Python 3.11.13.
+- PyTorch 2.11.0+cu128.
+- Four CPU threads.
+- CPU execution, with CUDA unavailable on the tested login node.
+
+### 8.2 Model Parameter Counts
+
+| Component | Network weight elements |
 |---|---:|
-| Model parameters | 37,529 |
-| Training device | CPU |
-| Embedding epochs | 2 |
-| Supervisor epochs | 2 |
-| Joint training epochs | 10 |
-| Total training runtime | 460.38 seconds |
+| TimeGAN Generator | 9,024 |
+| TimeGAN Supervisor | 4,200 |
+| Price Head | 24,823 |
+| MultiFactor Volume Head | 540 |
+| Depth MDN | 45,000 |
+| **Total inference network weights** | **83,587** |
 
-### 9.2 CPU Inference Performance
+The complete TimeGAN training architecture contains 37,698 network parameters, including components not used during inference.
 
-Inference performance was measured using a batch size of 64, with 10 warm-up batches followed by 100 timed batches.
+Additional Markov model statistics are fitted during generation and are not included in the neural-network parameter count.
 
-| Measurement | Result |
-|---|---:|
-| Generated sequences | 6,400 |
-| Sequence length | 24 |
-| Features per time step | 40 |
-| Total inference time | 0.5928 seconds |
-| Average latency per sequence | 0.0926 ms |
-| Generation throughput | 10,795.45 sequences/second |
+### 8.3 CPU End-to-End Runtime
 
-The reported per-sequence latency is an average derived from batched inference rather than a direct single-sequence latency measurement.
+| Generated sequences | Sequence length | Wall-clock time | Peak resident memory |
+|---|---:|---:|---:|
+| 128 | 24 | 5.78 seconds | approximately 950.7 MiB |
+| 512 | 24 | 6.03 seconds | approximately 949.7 MiB |
 
-### 9.3 GPU Memory Usage
+These timings include data loading, checkpoint loading, training-data statistical fitting, generation, and file output.
 
-The final model was trained and profiled on CPU. Therefore, peak GPU VRAM consumption during full-model training has not been measured.
+They should not be interpreted as isolated neural-network inference latency. The measurements were obtained from single executions on a shared CPU login environment and are not a controlled multi-run performance benchmark.
 
-A preliminary simplified GPU experiment was conducted on an NVIDIA A100 GPU, but its results are not directly comparable with the final 40-feature model.
 
-GPU memory profiling of the final model remains an optional additional experiment for the resource analysis.
+## 9. Reproducibility and Code Organisation
 
-### 9.4 Efficiency versus Generative Quality
+### 9.1 Source Files
 
-Although the model supports fast CPU inference, the generated sequences exhibit substantial distributional mismatch and limited diversity.
+The formal implementation includes:
 
-Therefore, computational efficiency alone does not justify deployment for realistic market simulation or algorithmic trading backtesting.
-
-## 10. Reproducibility
-
-### 10.1 Project Files
-
-The implementation contains the following core files:
-
-| File | Purpose |
+| File | Responsibility |
 |---|---|
-| `modules.py` | TimeGAN neural network components |
-| `dataset.py` | Original dataset loading and preprocessing |
-| `dataset_v2.py` | Relative mid-price preprocessing |
-| `modules_v3_2.py` | Identity-activation TimeGAN variant |
-| `train.py` | Three-stage model training |
-| `evaluate.py` | Initial distributional evaluation |
-| `market_constraints.py` | Order-book structure validation |
-| `ssim_evaluation.py` | Depth heatmap SSIM |
-| `baseline_evaluation.py` | Baseline comparison |
-| `failure_cases.py` | Representative failure case selection |
-| `predict.py` | Standalone model inference and order-book visualisation |
-| `README.md` | Documentation and experimental report |
+| `dataset.py` | Chronological data splitting, preprocessing and normalisation |
+| `modules.py` | TimeGAN, constrained price heads, volume generation and probabilistic depth networks |
+| `train.py` | Training entry point and stage selection |
+| `train_multifactor.py` | MultiFactor Volume Head training implementation |
+| `predict.py` | Integrated synthetic LOB generation and structural checks |
 
-### 10.2 Dependencies
+### 9.2 Execution Environment
 
-The project was developed and tested in a Python virtual environment on the UQ Rangpur computing cluster.
+The project was tested in a Linux-based Rangpur environment with Python 3.11.13.
 
-The following software versions were recorded from the working environment:
+The following dependency versions were recorded from the project's active virtual environment:
 
-| Software | Version |
+| Dependency | Version |
 |---|---|
 | Python | 3.11.13 |
 | PyTorch | 2.11.0+cu128 |
 | NumPy | 2.4.6 |
 | pandas | 3.0.6 |
-| Matplotlib | 3.11.2 |
+| SciPy | 1.17.1 |
 | scikit-image | 0.26.0 |
+| Matplotlib | 3.11.2 |
+| scikit-learn | 1.9.1 |
+| Pillow | 13.0.0 |
+| imageio | 2.38.1 |
 
-The final TimeGAN training, generation, and evaluation experiments were successfully executed on CPU.
+The PyTorch package was built with CUDA 12.8 support. However, CUDA availability depends on the allocated node and its GPU driver. The final CPU runtime measurements were collected in a session without usable CUDA acceleration.
 
-Although the installed PyTorch package includes CUDA 12.8 support, CUDA availability depends on the GPU node and its installed NVIDIA driver. GPU execution was not required for the reported final CPU experiments.
+These are verified environment versions, not a guarantee that all dependencies can be installed together on every operating system. Reproduction also requires the LOBSTER input data and the trained model checkpoints.
 
-For reproducibility, the exact software environment should be considered alongside the dataset version, random seed, preprocessing configuration, model architecture, and training hyperparameters.
+### 9.3 Training Stages
 
-### 10.3 Training
+The formal training entry point exposes the following stages:
 
-The final experiment can be reproduced using:
+- `stage1`: TimeGAN embedding and recovery pretraining.
+- `v43`: TimeGAN supervisor and adversarial training.
+- `v53`: Initial constrained LOB price head.
+- `v58`: MLP-based constrained price head.
+- `v59`: Variance-aware price head.
+- `v510`: Latent-matching TimeGAN refinement.
+- `v514`: MultiFactor Volume Head training.
+- `depth`: Probabilistic Depth MDN training.
 
-```bash
-python train.py \
-  --data-dir data \
-  --dataset-version v2 \
-  --model-version v3.2 \
-  --epochs 2 \
-  --supervisor-epochs 2 \
-  --joint-epochs 10 \
-  --joint-lr 0.0001 \
-  --generator-updates 2 \
-  --batch-size 64 \
-  --device cpu \
-  --output-dir checkpoints_v3_3_10ep
-```
-
-### 10.4 Evaluation
-
-Run the initial distributional evaluation:
+For example, the V5.14 training stage can be smoke-tested with:
 
 ```bash
-python evaluate.py \
-  --data-dir data \
-  --checkpoint checkpoints_v3_3_10ep/timegan_joint.pt \
-  --device cpu \
-  --output-dir outputs_v3_3_10ep
+python submission/TimeGAN_s4983933/train.py \
+  --stage v514 \
+  --smoke-test \
+  --checkpoint outputs_v5_10_latent_matching/timegan_finetuned.pt \
+  --output-dir outputs_smoke_v514_final
 ```
 
-Run SSIM evaluation:
+This stage was verified to complete training and validation, save a checkpoint, and reload its parameters with `strict=True`.
+
+Other training stages have been individually smoke-tested, but a complete fresh end-to-end training run has not been independently verified.
+
+### 9.4 Generating Synthetic Order Books
+
+The integrated prediction script accepts the TimeGAN, price-head, volume-head and depth-model checkpoints.
+
+Example:
 
 ```bash
-python ssim_evaluation.py \
-  --data-dir data \
-  --generated outputs_v3_3_10ep/generated_v2_v3_2.npy \
-  --output-dir outputs_ssim_v3_3_10ep \
-  --pairs 200 \
-  --seed 42
+python submission/TimeGAN_s4983933/predict.py \
+  --num-sequences 512 \
+  --seq-len 24 \
+  --output-dir outputs_formal_predict
 ```
 
-Run baseline comparison:
+This command requires the trained checkpoints at their configured default locations, together with the prepared training data.
 
-```bash
-python baseline_evaluation.py \
-  --data-dir data \
-  --generated outputs_v3_3_10ep/generated_v2_v3_2.npy \
-  --output-dir outputs_baselines_v3_3 \
-  --pairs 200 \
-  --seed 42
-```
+The predictor fits its Markov return and spread statistics using training data and combines them with neural-network outputs.
 
-Generate failure case visualisations:
+The final generated archive contains:
 
-```bash
-python failure_cases.py \
-  --data-dir data \
-  --generated outputs_v3_3_10ep/generated_v2_v3_2.npy \
-  --output-dir outputs_failure_cases_v3_3
-```
+- `features`
+- `relative_orderbook`
+- `log_returns`
+- `spread_ticks`
+- `volumes`
+- `midprice`
 
-The raw dataset, generated `.npy` files, and trained model checkpoints should not be committed to GitHub.
+The primary generated feature array has shape `(512, 24, 41)` for the example command.
 
-Only implementation scripts, necessary documentation, and appropriately sized report figures should be included in the repository.
+### 9.5 Reproducibility Limitations
 
-## 11. Engineering Recommendation
+The final pipeline requires four separately trained neural-network checkpoints. These weights are not included in the source-only GitHub submission.
 
-Based on the current experiments, the final TimeGAN model should **not be deployed for realistic trading strategy backtesting**.
+The published training entry points describe the main model stages; nevertheless, exact reproduction of historical V5.38 results requires the documented model configurations, training data, random seeds, checkpoint dependencies and evaluation protocol.
 
-Although 97.29% of generated snapshots satisfy the four implemented market constraints, the model exhibits significant limitations.
+The benchmark and additional diagnostic scripts were developed as separate experimental utilities. Their results are reported transparently and should not be interpreted as automatically reproduced by running `predict.py` alone.
 
-The Spread KL of 24.375349 is substantially above the specified target of 0.1.
 
-Generated depth heatmaps have an extremely high inter-sample SSIM, indicating severe diversity collapse.
+## 10. Experimental Figures
 
-The model also produces wider and less variable bid–ask spreads than the real test data.
+### 10.1 Real versus Synthetic Order Book Depth
 
-Its additional architectural complexity therefore does not currently provide sufficient generative fidelity to justify operational deployment.
+The following figure compares five representative real validation windows with five independently generated V5.38 windows. Each heatmap contains 20 liquidity levels across 24 time steps.
 
-Future improvements should investigate:
+![Real versus synthetic order book depth](figures/real_vs_synthetic_depth.png)
 
-- Explicit modelling of mid-price return dynamics.
-- Diversity-preserving generative objectives.
-- Improved adversarial training stability.
-- Financial constraint-aware generation.
-- Tick-size and quantity-validity checks.
-- Evaluation across additional trading days.
-- More extensive comparison with genuinely trained generative baselines.
+**Figure 1.** Real versus synthetic depth heatmaps. Bid levels are ordered from Bid10 to Bid1, followed by Ask1 to Ask10. The colour scale uses normalised log-volume values.
 
-The implementation remains useful as a research prototype for studying the strengths and limitations of adversarial financial time-series generation.
+The synthetic model reproduces some persistent horizontal liquidity structures but exhibits differences in depth distribution and temporal variation. These are independent samples, not paired reconstructions.
+
+### 10.2 TimeGAN Training Diagnostics
+
+![TimeGAN training losses](figures/training_losses.png)
+
+**Figure 2.** Training loss diagnostics from an earlier TimeGAN development stage.
+
+These curves provide information about training behaviour but should not be interpreted as the training history of every component of the final V5.38 hybrid generator.
+
+### 10.3 Additional Visualisation
+
+A separate 500-step synthetic limit order book animation was generated to illustrate evolving bid and ask liquidity.
+
+The animation is supplementary qualitative material and does not substitute for quantitative long-horizon stability analysis.
+
+
+## 11. References
+
+[1] J. Yoon, D. Jarrett, and M. van der Schaar, "Time-series Generative Adversarial Networks," Advances in Neural Information Processing Systems (NeurIPS), 2019.
+
+[2] LOBSTER, "Limit Order Book System — The Efficient Reconstructor." https://lobsterdata.com/
+
+[3] Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, "Image Quality Assessment: From Error Visibility to Structural Similarity," IEEE Transactions on Image Processing, vol. 13, no. 4, pp. 600–612, 2004. doi:10.1109/TIP.2003.819861.
+
 
 ## 12. Artificial Intelligence Usage Disclosure
 
-OpenAI ChatGPT was used to support learning, implementation, debugging, experimental planning, and technical documentation.
+**AI Tool Used:** OpenAI ChatGPT.
 
-AI assistance included explanations of TimeGAN architecture, suggestions for PyTorch training code, data preprocessing, loss-function debugging, evaluation scripts, baseline construction, and failure-case analysis.
+ChatGPT was used throughout this project as an AI-assisted learning, programming, debugging, research support, translation, and technical writing tool.
 
-AI-generated suggestions were not assumed to be correct without verification.
+AI assistance included:
 
-The implementation was executed and tested on the Rangpur computing environment. Training logs, generated outputs, KL metrics, structural validity checks, baseline comparisons, and SSIM results were examined during development.
+- **Conceptual Understanding:** Explaining TimeGAN architecture, PyTorch concepts, and financial limit order book modelling.
+- **Code Development:** Assisting with data preprocessing, model implementation, training pipelines, refactoring, and synthetic sequence generation.
+- **Experimental Analysis:** Supporting baseline comparisons, KL divergence evaluation, depth heatmap analysis, structural validity checks, and long-horizon experiments.
+- **Debugging:** Helping diagnose Python errors, checkpoint compatibility problems, and numerical precision issues.
+- **Translation and English Editing:** Translating technical explanations from Chinese into English, correcting grammar, improving clarity, and polishing academic English while preserving the intended meaning.
+- **Technical Writing:** Assisting with README organisation, explanations, and presentation.
 
-The final implementation and scientific claims remain the student's responsibility.
+**Verification and Testing:**
 
+AI-suggested code was assessed through practical execution, staged smoke tests, checkpoint loading with strict parameter matching, structural validity checks, and quantitative comparisons with baseline models.
 
-Verification included Python syntax checks, synthetic-data sanity tests, full model training on Rangpur, checkpoint loading, independent inference, market constraint validation, SSIM evaluation, and baseline comparisons. The reported metrics were obtained from actual program outputs rather than assumed model performance.
+Errors and limitations discovered during testing were investigated and documented. Reported experimental measurements are based on executed experiments, not AI-generated estimates.
 
-The experiments also identified limitations in the generated data, including mode collapse, distribution mismatch, and incomplete mid-price return modelling. These issues are explicitly documented rather than presented as successful results.
+I remain responsible for the submitted code, methodology, results, and report.
 
+## 13. Original Feasibility Review
 
-## 13. References
+The original one-page feasibility review, prepared for the compulsory midpoint tutor consultation, is included here:
 
-[1] J. Yoon, D. Jarrett, and M. van der Schaar, "Time-series Generative Adversarial Networks," *Advances in Neural Information Processing Systems (NeurIPS)*, vol. 32, 2019.  
-https://papers.neurips.cc/paper_files/paper/2019/hash/c9efe5f26cd17ba6216bbe2a7d26d490-Abstract.html
+[View the original Feasibility Review](feasibility_review.pdf)
 
-[2] LOBSTER, "Limit Order Book System - The Efficient Reconstructor: Data Samples," LOBSTER Data.  
-https://data.lobsterdata.com/info/DataSamples.php
+The review documented the initial project scope, acceptance criteria, TimeGAN architecture, preliminary LOBSTER data audit, baseline evidence, GPU smoke test, resource budget, and fallback plan.
 
-[3] LOBSTER, "LOBSTER Output Structure and Data Format," LOBSTER Data.  
-https://data.lobsterdata.com/info/DataStructure.php
+At that stage, the preliminary prototype operated on three features per time step. The final implementation subsequently expanded to the full 41-feature representation and incorporated constrained price generation, Markov price dynamics, and probabilistic liquidity modelling.
 
-[4] Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, "Image Quality Assessment: From Error Visibility to Structural Similarity," *IEEE Transactions on Image Processing*, vol. 13, no. 4, pp. 600–612, 2004. doi: 10.1109/TIP.2003.819861.  
-https://doi.org/10.1109/TIP.2003.819861
-
-[5] The University of Queensland, School of Electrical Engineering and Computer Science, "COMP3710 / COMP7710 Report: Pattern Recognition — Working Prototype Project in the Era of Artificial Intelligence," Version 2.2 Final Assessment Specification, 2026. Course assessment document.
-
----
-
-## 14. Conclusion
-
-This project developed a complete prototype pipeline for synthetic limit order book generation using TimeGAN.
-
-The pipeline includes dataset preprocessing, three-stage generative training, synthetic sequence generation, distributional evaluation, structural similarity analysis, market constraint validation, baseline comparisons, and representative failure-case analysis.
-
-The experiments demonstrated that different preprocessing and optimisation strategies can influence training stability and generated sample variation.
-
-However, the final model did not sufficiently reproduce the distributional diversity or spread dynamics of real order-book data.
-
-In particular, mode collapse remained a major limitation, and the required market-distribution fidelity targets were not achieved.
-
-The principal contribution of the work is a reproducible experimental framework for critically assessing synthetic financial order books rather than a deployment-ready market simulator.
+The preliminary feasibility measurements are retained as historical results and must not be confused with the final model evaluation.

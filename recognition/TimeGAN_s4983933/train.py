@@ -1075,7 +1075,7 @@ def train_v510(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--stage', required=True, choices=['stage1', 'v43', 'v53', 'v58', 'v59', 'v510', 'depth'])
+    parser.add_argument('--stage', required=True, choices=['stage1', 'v43', 'v53', 'v58', 'v59', 'v510', 'v514', 'depth'])
     parser.add_argument('--data-dir', default='data')
     parser.add_argument('--output-dir', default=None)
     parser.add_argument('--smoke-test', action='store_true')
@@ -1099,7 +1099,15 @@ def main():
     parser.add_argument('--target-fraction', type=float, default=0.5)
     parser.add_argument('--latent-weight', type=float, default=5.0)
     args = parser.parse_args()
-    if args.stage == 'depth':
+    if args.stage == 'v514':
+        from train_multifactor import train_v514
+        train_v514(
+            smoke_test=args.smoke_test,
+            data_dir=args.data_dir,
+            output_dir=args.output_dir,
+            checkpoint=args.checkpoint,
+        )
+    elif args.stage == 'depth':
         train_depth(smoke_test=args.smoke_test, data_dir=args.data_dir, output_dir=args.output_dir)
     elif args.stage == 'stage1':
         if args.smoke_test:
