@@ -1,7 +1,8 @@
 # Time-Series Generation: TimeGAN for Limit Order Book Simulation
 
 **COMP3710 — Pattern Recognition and Analysis (2026)**
-**Student ID:** s4983933
+**Student ID:** 49839339
+**UQ Username:** s4983933
 **Project 7 — Hard Difficulty**
 
 ## 1. Project Overview
