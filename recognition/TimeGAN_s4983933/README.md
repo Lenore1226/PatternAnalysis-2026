@@ -22,7 +22,7 @@ The project evaluates whether these components improve upon a conventional TimeG
 
 ## 2. Dataset and Preprocessing
 
-The project uses the supplied LOBSTER AMZN Level-10 limit order book dataset.
+The project uses the supplied LOBSTER AMZN Level-10 limit order book dataset [2].
 
 Each observation contains 41 features:
 
@@ -46,11 +46,27 @@ The model is trained on the training partition, while validation data supports m
 
 The implementation uses a consistent normalization and inverse-transformation pipeline, with price, volume and return characteristics evaluated in their appropriate representations.
 
+### 2.1 Detailed Preprocessing Pipeline
+
+The final preprocessing pipeline is implemented in `dataset.py`, primarily through `RelativeOrderBookTransform`, `MixedLOBNormalizer`, and `prepare_dataset_v4`.
+
+**Price representation.** Raw LOBSTER prices are converted from their integer-scaled representation by dividing by 10,000. Order-book price features are represented relative to a midpoint reference, allowing the model to focus on market structure rather than absolute stock-price levels.
+
+**Volume transformation.** Order quantities are transformed using `log1p` to reduce the effect of large volume magnitudes. The corresponding inverse transformation uses `expm1`.
+
+**Return transformation.** The additional return feature is normalised separately from the 40 order-book features. The implementation uses an `arcsinh` transformation scaled using the median magnitude of nonzero training returns, followed by training-derived standardisation.
+
+**Leakage prevention.** Observations are split chronologically into 70% training, 15% validation and 15% testing before normalisation parameters are fitted. The normaliser is fitted exclusively on training observations and then applied unchanged to validation and test observations.
+
+**Sequence construction.** Each split is converted into fixed-length windows. The default sequence length and stride are both 24, producing non-overlapping windows without crossing the chronological split boundaries.
+
+This design reduces information leakage and supports a consistent evaluation of the generated data against held-out market observations.
+
 ## 3. Model Architecture
 
 ### 3.1 TimeGAN Backbone
 
-The TimeGAN backbone uses recurrent neural networks to learn temporal representations.
+The TimeGAN backbone uses recurrent neural networks to learn temporal representations, following the TimeGAN framework proposed by Yoon et al. [1].
 
 The architecture contains five components:
 
@@ -199,7 +215,7 @@ These findings indicate that the model captures aspects of liquidity persistence
 
 ### 6.3 SSIM Reliability and Interpretation
 
-A repeated random-pairing experiment was performed using the same depth image representation and normalisation as the unified benchmark.
+A repeated random-pairing experiment was performed using the same depth image representation and normalisation as the unified benchmark. Structural Similarity Index Measure (SSIM) follows Wang et al. [3].
 
 | Comparison | Mean SSIM | Standard deviation across 20 repeats |
 |---|---:|---:|
@@ -415,7 +431,7 @@ The formal training entry point exposes the following stages:
 For example, the V5.14 training stage can be smoke-tested with:
 
 ```bash
-python submission/TimeGAN_s4983933/train.py \
+python recognition/TimeGAN_s4983933/train.py \
   --stage v514 \
   --smoke-test \
   --checkpoint outputs_v5_10_latent_matching/timegan_finetuned.pt \
@@ -433,7 +449,7 @@ The integrated prediction script accepts the TimeGAN, price-head, volume-head an
 Example:
 
 ```bash
-python submission/TimeGAN_s4983933/predict.py \
+python recognition/TimeGAN_s4983933/predict.py \
   --num-sequences 512 \
   --seq-len 24 \
   --output-dir outputs_formal_predict
@@ -462,6 +478,25 @@ The published training entry points describe the main model stages; nevertheless
 
 The benchmark and additional diagnostic scripts were developed as separate experimental utilities. Their results are reported transparently and should not be interpreted as automatically reproduced by running `predict.py` alone.
 
+
+### 9.6 Required Data and Model Checkpoints
+
+The prediction script requires the supplied LOBSTER AMZN Level-10 order-book and message CSV files. By default, it searches for input files in the `data/` directory.
+
+The integrated V5.38 generator also requires four trained checkpoint files:
+
+| Component | Default checkpoint path |
+|---|---|
+| TimeGAN temporal backbone | `outputs_v5_10_latent_matching/timegan_finetuned.pt` |
+| Variance-aware price head | `outputs_v5_9_variance_aware/variance_aware_best.pt` |
+| MultiFactor Volume Head | `outputs_v5_14_multifactor/best_multifactor_head.pt` |
+| Probabilistic depth MDN | `outputs_v5_29_mdn/best_mdn_safe.pt` |
+
+These paths are relative to the working directory from which `predict.py` is executed. They can be overridden using the corresponding checkpoint command-line arguments.
+
+Datasets and trained model weights are intentionally excluded from the GitHub repository in accordance with the assessment's repository rules.
+
+The formal inference implementation has been tested with the specified trained checkpoints. Individual training stages have undergone smoke tests, but complete reproduction of the historical final results from a fresh checkout has not been fully verified.
 
 ## 10. Experimental Figures
 
@@ -533,3 +568,46 @@ The review documented the initial project scope, acceptance criteria, TimeGAN ar
 At that stage, the preliminary prototype operated on three features per time step. The final implementation subsequently expanded to the full 41-feature representation and incorporated constrained price generation, Markov price dynamics, and probabilistic liquidity modelling.
 
 The preliminary feasibility measurements are retained as historical results and must not be confused with the final model evaluation.
+
+### 13.1 Feasibility Review — Original Content
+
+#### User Need, Scope & Acceptance Criteria
+
+This prototype aims to generate synthetic limit order book (LOB) sequences for quantitative researchers evaluating market simulations and risk strategies. The central dilemma is preserving market rules while reproducing real trading dynamics.
+
+Acceptance criteria:
+
+1. Positive bid–ask spreads, ordered ten-level price ladders and non-negative volumes.
+2. KL divergence ≤ 0.1 for spreads and mid-price returns.
+3. Depth-heatmap SSIM > 0.6.
+4. Baseline comparison, 3–5 failure-case audits and resource profiling.
+
+#### Model Choice & Course Concepts
+
+Data: LOBSTER AMZN Level-10 sample, 21 June 2012 (40 bid/ask price and volume features per observation).
+
+Model: TimeGAN with embedder, recovery, generator, supervisor and discriminator networks, combining adversarial learning with supervised temporal dynamics.
+
+Concepts: RNNs, GAN optimisation and distributional evaluation.
+
+Planned pipeline: price log-returns, log-volume scaling, training-only normalisation, fixed-length sequences and chronological train/validation/test splits. An empirical resampling generator is the initial baseline.
+
+#### Preliminary Feasibility Evidence — Rangpur
+
+Data audit: 269,748 corresponding message and order-book records. No missing values, negative volumes, crossed/locked best quotes, price-ladder ordering violations or backward timestamps were found. The sample spans approximately 09:30–16:00.
+
+Preprocessing / baseline: chronological 70/15/15 splitting produced 7,867 / 1,685 / 1,685 non-overlapping sequences (24 steps; 3 initial features), with no training NaNs.
+
+Spread resampling generated 40,463 positive spreads; mean generated spread was 0.14036 versus 0.09791 on held-out test data.
+
+GPU smoke test: a simplified five-network prototype trained for a few steps on an NVIDIA A100 40GB with 512 training sequences; output shape (32, 24, 3), runtime 3.96 s and peak allocated GPU memory 27.15 MB.
+
+Outputs were finite. This verifies execution, not convergence or full order-book realism.
+
+#### Risks, Compute Budget & Fallback
+
+Risks include unstable GAN training, violated market constraints, limited single-day data coverage and higher full-model compute cost.
+
+Next, build full Level-10 sequences and TimeGAN training, compare against a full-book baseline, measure actual training resources and analyse 3–5 failures.
+
+Begin with short A100 allocations and small batches; reduce model size or sequence length if needed. Ask the tutor whether the free single-day sample is sufficient.
