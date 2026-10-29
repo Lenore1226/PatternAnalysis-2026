@@ -525,7 +525,7 @@ A separate 500-step synthetic limit order book animation was generated to illust
 
 The animation is supplementary qualitative material and does not substitute for quantitative long-horizon stability analysis.
 
-![500-step Synthetic Limit Order Book Animation](figures/synthetic_lob_500.gif)git status --short
+![500-step Synthetic Limit Order Book Animation](figures/synthetic_lob_500.gif)
 ## 11. References
 
 [1] J. Yoon, D. Jarrett, and M. van der Schaar, "Time-series Generative Adversarial Networks," Advances in Neural Information Processing Systems (NeurIPS), 2019.
