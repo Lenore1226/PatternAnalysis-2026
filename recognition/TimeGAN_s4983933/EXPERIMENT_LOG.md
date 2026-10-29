@@ -106,6 +106,8 @@ These experiments demonstrate the distinction between reconstruction quality, ma
 ### Project decision
 With the submission deadline on 2026-10-30, stop expanding the model architecture. Preserve V3.3 as the stable baseline and document V4.3 and V5.3 as experimental investigations. Prioritize final evaluation, reproducibility, documentation, and submission.
 
+
+**Final submission clarification (2026-10-29):** The decision above was a provisional project plan recorded during the V5.3 experiments, not the final model-selection decision. Subsequent V5.x experiments continued to investigate mode collapse, market validity, return dynamics and liquidity structure. The final submitted model is the V5.38 integrated hybrid generator, as described in `README.md`. V3.3 remains a historical stable baseline and is not the final submitted generator.
 ## 2026-10-20 — V5.4 Diversity-aware TimeGAN Experiments
 
 ### Objective
